@@ -491,7 +491,7 @@ function NewUPRForm({ airline, onCreate }: { airline: string; onCreate: (u: UPR)
   const [pdf, setPdf] = useState<Attachment | undefined>(undefined);
 
   const setFir = (i: number, v: string) => setFirs((p) => p.map((x, idx) => (idx === i ? v : x)));
-  const addRow = () => firs.length < 5 && setFirs([...firs, ""]);
+  const addRow = () => setFirs([...firs, ""]);
   const rmRow = (i: number) => firs.length > 1 && setFirs(firs.filter((_, idx) => idx !== i));
 
   const submit = () => {
