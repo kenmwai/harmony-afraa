@@ -131,12 +131,10 @@ function AuthPage() {
               ))}
             </div>
             {role === "airline" ? (
-              <label className="block mt-2">
-                <span className="text-[10px] uppercase tracking-wider text-slate-400">Airline</span>
-                <select value={airline} onChange={(e) => setAirline(e.target.value)} className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none">
-                  {airlines.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
-                </select>
-              </label>
+              <div className="grid grid-cols-[1fr_2fr] gap-2 mt-2">
+                <Field label="Airline code" value={airlineCode} onChange={(v) => setAirlineCode(v.toUpperCase())} placeholder="KQA" />
+                <Field label="Airline name" value={airlineName} onChange={setAirlineName} placeholder="Kenya Airways" />
+              </div>
             ) : (
               <label className="block mt-2">
                 <span className="text-[10px] uppercase tracking-wider text-slate-400">FIR Hub</span>
