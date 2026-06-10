@@ -565,10 +565,9 @@ function NewUPRForm({ airline, onCreate }: { airline: string; onCreate: (u: UPR)
         </div>
         <button
           onClick={addRow}
-          disabled={firs.length >= 5}
-          className="mt-2 text-xs text-sky-400 hover:text-sky-300 disabled:opacity-40"
+          className="mt-2 text-xs text-sky-400 hover:text-sky-300"
         >
-          + Add transit FIR ({firs.length}/5)
+          + Add transit FIR ({firs.length})
         </button>
       </div>
 
