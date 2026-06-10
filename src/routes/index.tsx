@@ -420,7 +420,7 @@ function AirlineView(props: {
   uprs: UPR[];
   setUprs: React.Dispatch<React.SetStateAction<UPR[]>>;
   activeId: string | null;
-  setActiveId: (id: string) => void;
+  setActiveId: (id: string | null) => void;
   active: UPR | null;
   updateUPR: (id: string, fn: (u: UPR) => UPR) => void;
   broadcasts: Broadcast[];
