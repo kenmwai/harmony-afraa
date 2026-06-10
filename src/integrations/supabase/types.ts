@@ -308,6 +308,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      approve_user: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _scope: string
+          _user_id: string
+        }
+        Returns: undefined
+      }
+      claim_first_admin: { Args: never; Returns: boolean }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
