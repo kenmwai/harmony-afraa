@@ -131,14 +131,10 @@ function UPRApp() {
 
   const active = uprs.find((u) => u.id === activeId) ?? null;
 
-  useEffect(() => {
-    if (!activeId && uprs.length) setActiveId(uprs[0].id);
-  }, [uprs, activeId]);
-
   const updateUPR = (id: string, fn: (u: UPR) => UPR) =>
     setUprs((prev) => prev.map((u) => (u.id === id ? fn(u) : u)));
 
-  if (!session) return <SignIn onSignIn={setSession} />;
+  if (!session) return <SignIn onSignIn={(s) => { setActiveId(null); setSession(s); }} />;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
@@ -176,20 +172,64 @@ function UPRApp() {
 }
 
 const ADMIN_PASSCODE = "UPR-ADMIN-2026";
+const PASSWORD_RULES = [
+  { test: (p: string) => p.length >= 8, label: "At least 8 characters" },
+  { test: (p: string) => /[A-Z]/.test(p), label: "One uppercase letter" },
+  { test: (p: string) => /[a-z]/.test(p), label: "One lowercase letter" },
+  { test: (p: string) => /\d/.test(p), label: "One digit" },
+  { test: (p: string) => /[^A-Za-z0-9]/.test(p), label: "One special character" },
+];
+const ACCOUNTS_KEY = "upr.accounts.v1";
+type StoredAccount = { pwd: string; name: string };
+const loadAccounts = (): Record<string, StoredAccount> => {
+  try {
+    if (typeof window === "undefined") return {};
+    return JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || "{}");
+  } catch { return {}; }
+};
+const saveAccounts = (a: Record<string, StoredAccount>) => {
+  try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(a)); } catch {}
+};
+const accountKey = (role: "airline" | "ansp", scope: string) => `${role}:${scope.trim().toLowerCase()}`;
+// lightweight obfuscation — MVP only; not a real hash
+const obf = (s: string) => { try { return typeof window === "undefined" ? s : btoa(unescape(encodeURIComponent(s))); } catch { return s; } };
 
 function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
   const [role, setRole] = useState<Exclude<Role, "admin">>("airline");
   const [name, setName] = useState("");
   const [airline, setAirline] = useState("Kenya Airways");
   const [fir, setFir] = useState("HTDC");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [err, setErr] = useState("");
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminCode, setAdminCode] = useState("");
   const [adminErr, setAdminErr] = useState("");
 
-  const canSubmit = name.trim().length > 0;
+  const scope = role === "airline" ? airline : fir;
+  const accounts = loadAccounts();
+  const existing = accounts[accountKey(role, scope)];
+  const isRegister = !existing;
+
+  const passwordChecks = PASSWORD_RULES.map((r) => ({ label: r.label, ok: r.test(password) }));
+  const passwordValid = passwordChecks.every((c) => c.ok);
+
+  const canSubmit =
+    name.trim().length > 0 &&
+    password.length > 0 &&
+    (isRegister ? passwordValid && password === confirm : true);
 
   const submit = () => {
-    if (!canSubmit) return;
+    setErr("");
+    if (!name.trim()) return setErr("Operator name is required");
+    if (isRegister) {
+      if (!passwordValid) return setErr("Password does not meet the strict policy");
+      if (password !== confirm) return setErr("Passwords do not match");
+      const next = { ...accounts, [accountKey(role, scope)]: { pwd: obf(password), name: name.trim() } };
+      saveAccounts(next);
+    } else {
+      if (existing.pwd !== obf(password)) return setErr("Invalid password for this account");
+    }
     if (role === "airline") onSignIn({ role, name: name.trim(), airline });
     else onSignIn({ role, name: name.trim(), fir });
   };
@@ -208,7 +248,7 @@ function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans grid place-items-center px-6">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans grid place-items-center px-6 py-10">
       <div className="w-full max-w-md rounded-2xl bg-slate-900/70 ring-1 ring-slate-800 p-6 shadow-2xl">
         <div className="flex items-center gap-3 mb-5">
           <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">U</div>
@@ -222,7 +262,7 @@ function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
           {roles.map((r) => (
             <button
               key={r.id}
-              onClick={() => setRole(r.id)}
+              onClick={() => { setRole(r.id); setErr(""); }}
               className={`w-full text-left rounded-lg px-3 py-2.5 ring-1 transition ${
                 role === r.id ? "bg-slate-800 ring-sky-500/60" : "bg-slate-950/40 ring-slate-800 hover:bg-slate-800/50"
               }`}
@@ -258,16 +298,55 @@ function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
           </label>
         )}
 
+        <label className="block mt-2">
+          <span className="text-[10px] uppercase tracking-wider text-slate-400">
+            Password {isRegister ? "· create new account" : "· existing account"}
+          </span>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => { setPassword(e.target.value); setErr(""); }}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            placeholder={isRegister ? "Set a strong password" : "Enter your password"}
+            className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
+          />
+        </label>
+
+        {isRegister && (
+          <>
+            <label className="block mt-2">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400">Confirm password</span>
+              <input
+                type="password"
+                value={confirm}
+                onChange={(e) => { setConfirm(e.target.value); setErr(""); }}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+                className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
+              />
+            </label>
+            <ul className="mt-2 grid grid-cols-2 gap-x-2 gap-y-0.5">
+              {passwordChecks.map((c) => (
+                <li key={c.label} className={`text-[10px] flex items-center gap-1 ${c.ok ? "text-emerald-400" : "text-slate-500"}`}>
+                  <span className={`h-1 w-1 rounded-full ${c.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
+                  {c.label}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {err && <div className="mt-2 text-[11px] text-rose-400">{err}</div>}
+
         <button
           onClick={submit}
           disabled={!canSubmit}
-          className="mt-5 w-full bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold rounded-lg py-2.5 text-sm transition"
+          className="mt-4 w-full bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold rounded-lg py-2.5 text-sm transition"
         >
-          Enter platform
+          {isRegister ? "Create account & enter" : "Sign in"}
         </button>
 
         <div className="text-[10px] text-slate-500 text-center mt-3">
-          Strict role-based access · view is scoped to your role
+          Strict role-based access · password policy enforced
         </div>
 
         <div className="mt-4 pt-3 border-t border-slate-800">
@@ -424,7 +503,7 @@ function AirlineView(props: {
   uprs: UPR[];
   setUprs: React.Dispatch<React.SetStateAction<UPR[]>>;
   activeId: string | null;
-  setActiveId: (id: string) => void;
+  setActiveId: (id: string | null) => void;
   active: UPR | null;
   updateUPR: (id: string, fn: (u: UPR) => UPR) => void;
   broadcasts: Broadcast[];
@@ -434,7 +513,11 @@ function AirlineView(props: {
   const myUprs = useMemo(() => uprs.filter((u) => u.airline === session.airline), [uprs, session.airline]);
 
   useEffect(() => {
-    if (!myUprs.find((u) => u.id === activeId)) setActiveId(myUprs[0]?.id ?? "");
+    if (myUprs.length === 0) {
+      if (activeId !== null) setActiveId(null);
+      return;
+    }
+    if (!myUprs.find((u) => u.id === activeId)) setActiveId(myUprs[0].id);
   }, [myUprs, activeId, setActiveId]);
 
   return (
@@ -491,7 +574,7 @@ function NewUPRForm({ airline, onCreate }: { airline: string; onCreate: (u: UPR)
   const [pdf, setPdf] = useState<Attachment | undefined>(undefined);
 
   const setFir = (i: number, v: string) => setFirs((p) => p.map((x, idx) => (idx === i ? v : x)));
-  const addRow = () => firs.length < 5 && setFirs([...firs, ""]);
+  const addRow = () => setFirs([...firs, ""]);
   const rmRow = (i: number) => firs.length > 1 && setFirs(firs.filter((_, idx) => idx !== i));
 
   const submit = () => {
@@ -565,10 +648,9 @@ function NewUPRForm({ airline, onCreate }: { airline: string; onCreate: (u: UPR)
         </div>
         <button
           onClick={addRow}
-          disabled={firs.length >= 5}
-          className="mt-2 text-xs text-sky-400 hover:text-sky-300 disabled:opacity-40"
+          className="mt-2 text-xs text-sky-400 hover:text-sky-300"
         >
-          + Add transit FIR ({firs.length}/5)
+          + Add transit FIR ({firs.length})
         </button>
       </div>
 
