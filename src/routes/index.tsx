@@ -268,7 +268,7 @@ function TopBar({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const roleLabel =
     session.role === "airline" ? `${session.airline} · Dispatcher` :
     session.role === "ansp" ? `${session.fir} ${FIRS.find((f) => f.code === session.fir)?.name ?? ""} · Controller` :
-    "Executive Analytics";
+    "Admin · Oversight";
   const roleColor =
     session.role === "airline" ? "from-sky-500 to-cyan-500" :
     session.role === "ansp" ? "from-amber-500 to-orange-500" :
