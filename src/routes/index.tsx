@@ -941,7 +941,7 @@ function ANSPDecisionPanel({ upr, seg, fir, updateUPR }: { upr: UPR; seg: Segmen
 }
 
 // ───────────────────────── Executive View ─────────────────────────
-function ExecView({ uprs }: { uprs: UPR[] }) {
+function AdminView({ uprs }: { uprs: UPR[] }) {
   const approved = uprs.filter((u) => computeVerdict(u) === "APPROVED");
   const minSaved = approved.reduce((s, u) => s + Math.max(0, u.baselineMinutes - u.optimizedMinutes), 0);
   const fuelSaved = approved.reduce((s, u) => s + Math.max(0, u.baselineMinutes - u.optimizedMinutes) * u.burnKgPerMin, 0);
