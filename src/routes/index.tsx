@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 export const Route = createFileRoute("/")({
+  ssr: false,
   head: () => ({
     meta: [
       { title: "UPR Coordination Platform" },
@@ -33,6 +34,7 @@ const REJECT_REASONS = [
 ];
 
 type SegStatus = "pending" | "approved" | "amended" | "rejected";
+type Attachment = { name: string; size: number; dataUrl: string };
 type Segment = {
   fir: string;
   status: SegStatus;
@@ -42,6 +44,7 @@ type Segment = {
   exit: string;
   fl: string;
   revision: number;
+  amendmentPdf?: Attachment;
 };
 type ChatMsg = { id: string; author: string; role: "airline" | "ansp" | "system"; text: string; ts: number };
 type UPR = {
@@ -54,17 +57,29 @@ type UPR = {
   createdAt: number;
   segments: Segment[];
   chat: ChatMsg[];
-  // analytics
-  baselineMinutes: number; // baseline flight time
-  optimizedMinutes: number; // UPR optimized time
+  flightPlanPdf?: Attachment;
+  baselineMinutes: number;
+  optimizedMinutes: number;
   burnKgPerMin: number;
+  airline: string;
 };
 type Broadcast = { id: string; author: string; role: string; text: string; ts: number; severity: "info" | "warn" | "critical" };
 
 // ───────────────────────── Helpers ─────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => Date.now();
-const fmtTime = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const fmtTime = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`);
+
+const readPdf = (file: File): Promise<Attachment> =>
+  new Promise((resolve, reject) => {
+    if (file.type !== "application/pdf") return reject(new Error("PDF only"));
+    if (file.size > 10 * 1024 * 1024) return reject(new Error("Max 10 MB"));
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, size: file.size, dataUrl: String(reader.result) });
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 
 const STATUS_META: Record<SegStatus, { color: string; bg: string; ring: string; label: string; dot: string }> = {
   pending: { color: "text-slate-300", bg: "bg-slate-700/60", ring: "ring-slate-500/40", label: "Pending", dot: "bg-slate-400" },
@@ -74,42 +89,42 @@ const STATUS_META: Record<SegStatus, { color: string; bg: string; ring: string; 
 };
 
 // ───────────────────────── Seed ─────────────────────────
-const seedUPRs = (): UPR[] => {
-  const baseline = 412;
-  const optimized = 367;
-  return [
-    {
-      id: uid(),
-      callsign: "KQA310",
-      flightNo: "KQ 310",
-      dep: "HKJK",
-      arr: "FACT",
-      aircraft: "B788",
-      createdAt: now() - 3600_000,
-      segments: [
-        { fir: "HKNA", status: "approved", entry: "ELGON", exit: "KOMOB", fl: "FL380", revision: 1 },
-        { fir: "HTDC", status: "amended", note: "Shift exit point 20NM east of KEMBO due crossing traffic.", entry: "KOMOB", exit: "KEMBO", fl: "FL380", revision: 1 },
-        { fir: "FIMM", status: "pending", entry: "KEMBO", exit: "TIVLI", fl: "FL400", revision: 1 },
-      ],
-      chat: [
-        { id: uid(), author: "System", role: "system", text: "UPR request opened. 3 FIR segments dispatched.", ts: now() - 3500_000 },
-        { id: uid(), author: "HTDC Dar es Salaam", role: "ansp", text: "We need lateral offset near KEMBO — crossing flow at FL380.", ts: now() - 1800_000 },
-      ],
-      baselineMinutes: baseline,
-      optimizedMinutes: optimized,
-      burnKgPerMin: 52,
-    },
-  ];
-};
+const seedUPRs = (): UPR[] => [
+  {
+    id: uid(),
+    callsign: "KQA310",
+    flightNo: "KQ 310",
+    dep: "HKJK",
+    arr: "FACT",
+    aircraft: "B788",
+    createdAt: now() - 3600_000,
+    airline: "Kenya Airways",
+    segments: [
+      { fir: "HKNA", status: "approved", entry: "ELGON", exit: "KOMOB", fl: "FL380", revision: 1 },
+      { fir: "HTDC", status: "amended", note: "Shift exit point 20NM east of KEMBO due crossing traffic.", entry: "KOMOB", exit: "KEMBO", fl: "FL380", revision: 1 },
+      { fir: "FIMM", status: "pending", entry: "KEMBO", exit: "TIVLI", fl: "FL400", revision: 1 },
+    ],
+    chat: [
+      { id: uid(), author: "System", role: "system", text: "UPR request opened. 3 FIR segments dispatched.", ts: now() - 3500_000 },
+      { id: uid(), author: "HTDC Dar es Salaam", role: "ansp", text: "We need lateral offset near KEMBO — crossing flow at FL380.", ts: now() - 1800_000 },
+    ],
+    baselineMinutes: 412,
+    optimizedMinutes: 367,
+    burnKgPerMin: 52,
+  },
+];
 
-// ───────────────────────── App ─────────────────────────
+// ───────────────────────── Auth / Role gate ─────────────────────────
 type Role = "airline" | "ansp" | "exec";
+type Session =
+  | { role: "airline"; name: string; airline: string }
+  | { role: "ansp"; name: string; fir: string }
+  | { role: "exec"; name: string };
 
 function UPRApp() {
-  const [role, setRole] = useState<Role>("airline");
+  const [session, setSession] = useState<Session | null>(null);
   const [uprs, setUprs] = useState<UPR[]>(() => seedUPRs());
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [anspFir, setAnspFir] = useState<string>("HTDC");
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([
     { id: uid(), author: "HKNA Nairobi", role: "ANSP", text: "Nairobi FIR radar down for maintenance 1200Z–1400Z.", ts: now() - 7200_000, severity: "warn" },
   ]);
@@ -123,12 +138,15 @@ function UPRApp() {
   const updateUPR = (id: string, fn: (u: UPR) => UPR) =>
     setUprs((prev) => prev.map((u) => (u.id === id ? fn(u) : u)));
 
+  if (!session) return <SignIn onSignIn={setSession} />;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      <TopBar role={role} setRole={setRole} />
+      <TopBar session={session} onSignOut={() => setSession(null)} />
       <div className="mx-auto max-w-[1500px] px-6 py-6">
-        {role === "airline" && (
+        {session.role === "airline" && (
           <AirlineView
+            session={session}
             uprs={uprs}
             setUprs={setUprs}
             activeId={activeId}
@@ -139,11 +157,10 @@ function UPRApp() {
             setBroadcasts={setBroadcasts}
           />
         )}
-        {role === "ansp" && (
+        {session.role === "ansp" && (
           <ANSPView
+            session={session}
             uprs={uprs}
-            anspFir={anspFir}
-            setAnspFir={setAnspFir}
             activeId={activeId}
             setActiveId={setActiveId}
             active={active}
@@ -152,19 +169,111 @@ function UPRApp() {
             setBroadcasts={setBroadcasts}
           />
         )}
-        {role === "exec" && <ExecView uprs={uprs} />}
+        {session.role === "exec" && <ExecView uprs={uprs} />}
+      </div>
+    </div>
+  );
+}
+
+function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
+  const [role, setRole] = useState<Role>("airline");
+  const [name, setName] = useState("");
+  const [airline, setAirline] = useState("Kenya Airways");
+  const [fir, setFir] = useState("HTDC");
+
+  const canSubmit = name.trim().length > 0;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    if (role === "airline") onSignIn({ role, name: name.trim(), airline });
+    else if (role === "ansp") onSignIn({ role, name: name.trim(), fir });
+    else onSignIn({ role, name: name.trim() });
+  };
+
+  const roles: { id: Role; label: string; sub: string }[] = [
+    { id: "airline", label: "Airline Dispatcher", sub: "Submit UPRs · attach flight plan PDF · respond to amendments" },
+    { id: "ansp", label: "ANSP / Regulator", sub: "Review FIR segment · approve / amend with PDF / reject" },
+    { id: "exec", label: "Executive Analytics", sub: "Read-only impact dashboard" },
+  ];
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans grid place-items-center px-6">
+      <div className="w-full max-w-md rounded-2xl bg-slate-900/70 ring-1 ring-slate-800 p-6 shadow-2xl">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">U</div>
+          <div>
+            <div className="font-semibold tracking-tight">UPR Coordination Platform</div>
+            <div className="text-[11px] text-slate-400 -mt-0.5">Sign in to your role</div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5 mb-4">
+          {roles.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => setRole(r.id)}
+              className={`w-full text-left rounded-lg px-3 py-2.5 ring-1 transition ${
+                role === r.id ? "bg-slate-800 ring-sky-500/60" : "bg-slate-950/40 ring-slate-800 hover:bg-slate-800/50"
+              }`}
+            >
+              <div className="text-sm font-medium">{r.label}</div>
+              <div className="text-[11px] text-slate-400">{r.sub}</div>
+            </button>
+          ))}
+        </div>
+
+        <Input label="Operator name" value={name} onChange={setName} placeholder="Jane Doe" />
+
+        {role === "airline" && (
+          <label className="block mt-2">
+            <span className="text-[10px] uppercase tracking-wider text-slate-400">Airline</span>
+            <input
+              value={airline}
+              onChange={(e) => setAirline(e.target.value)}
+              className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
+            />
+          </label>
+        )}
+        {role === "ansp" && (
+          <label className="block mt-2">
+            <span className="text-[10px] uppercase tracking-wider text-slate-400">FIR Hub</span>
+            <select
+              value={fir}
+              onChange={(e) => setFir(e.target.value)}
+              className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
+            >
+              {FIRS.map((f) => <option key={f.code} value={f.code}>{f.code} — {f.name}</option>)}
+            </select>
+          </label>
+        )}
+
+        <button
+          onClick={submit}
+          disabled={!canSubmit}
+          className="mt-5 w-full bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold rounded-lg py-2.5 text-sm transition"
+        >
+          Enter platform
+        </button>
+
+        <div className="text-[10px] text-slate-500 text-center mt-3">
+          Strict role-based access · view is scoped to your role
+        </div>
       </div>
     </div>
   );
 }
 
 // ───────────────────────── TopBar ─────────────────────────
-function TopBar({ role, setRole }: { role: Role; setRole: (r: Role) => void }) {
-  const tabs: { id: Role; label: string; sub: string }[] = [
-    { id: "airline", label: "Airline Dispatcher", sub: "Routing & revisions" },
-    { id: "ansp", label: "ANSP / Regulator", sub: "Segment decisions" },
-    { id: "exec", label: "Executive Analytics", sub: "Impact metrics" },
-  ];
+function TopBar({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
+  const roleLabel =
+    session.role === "airline" ? `${session.airline} · Dispatcher` :
+    session.role === "ansp" ? `${session.fir} ${FIRS.find((f) => f.code === session.fir)?.name ?? ""} · Controller` :
+    "Executive Analytics";
+  const roleColor =
+    session.role === "airline" ? "from-sky-500 to-cyan-500" :
+    session.role === "ansp" ? "from-amber-500 to-orange-500" :
+    "from-emerald-500 to-teal-500";
+
   return (
     <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
       <div className="mx-auto max-w-[1500px] px-6 py-3 flex items-center justify-between gap-6">
@@ -175,27 +284,92 @@ function TopBar({ role, setRole }: { role: Role; setRole: (r: Role) => void }) {
             <div className="text-[11px] text-slate-400 -mt-0.5">African User Preferred Routes · MVP</div>
           </div>
         </div>
-        <nav className="flex items-center gap-1 rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-1">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setRole(t.id)}
-              className={`px-3.5 py-1.5 rounded-lg text-sm transition ${
-                role === t.id ? "bg-slate-100 text-slate-900 shadow" : "text-slate-300 hover:text-white hover:bg-slate-800/70"
-              }`}
-              title={t.sub}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
+        <div className="flex items-center gap-3">
+          <div className={`px-3 py-1.5 rounded-lg bg-gradient-to-r ${roleColor} text-slate-950 text-xs font-semibold`}>
+            {roleLabel}
+          </div>
+          <div className="text-right leading-tight">
+            <div className="text-sm font-medium">{session.name}</div>
+            <button onClick={onSignOut} className="text-[11px] text-slate-400 hover:text-sky-300">Sign out</button>
+          </div>
+        </div>
       </div>
     </header>
   );
 }
 
+// ───────────────────────── PDF Attachment helpers (UI) ─────────────────────────
+function PdfPicker({ label, value, onChange }: { label: string; value?: Attachment; onChange: (a: Attachment | undefined) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handle = async (f: File | undefined) => {
+    setErr(null);
+    if (!f) return;
+    try {
+      const att = await readPdf(f);
+      onChange(att);
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to read PDF");
+    }
+  };
+
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">{label}</div>
+      {value ? (
+        <div className="flex items-center justify-between gap-2 rounded-md bg-slate-950/60 ring-1 ring-slate-800 px-2.5 py-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-red-400 text-base">📄</span>
+            <div className="min-w-0">
+              <div className="text-xs font-medium truncate">{value.name}</div>
+              <div className="text-[10px] text-slate-500">{fmtBytes(value.size)}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <a href={value.dataUrl} target="_blank" rel="noreferrer" className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700">Open</a>
+            <button onClick={() => onChange(undefined)} className="text-[10px] px-2 py-1 rounded ring-1 ring-slate-700 hover:bg-slate-800">Remove</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => inputRef.current?.click()}
+          className="w-full rounded-md bg-slate-950/60 ring-1 ring-dashed ring-slate-700 hover:ring-sky-500/60 px-2.5 py-3 text-xs text-slate-400 hover:text-sky-300 transition"
+        >
+          + Attach PDF (max 10 MB)
+        </button>
+      )}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={(e) => handle(e.target.files?.[0])}
+      />
+      {err && <div className="text-[10px] text-red-400 mt-1">{err}</div>}
+    </div>
+  );
+}
+
+function PdfBadge({ att, label }: { att: Attachment; label: string }) {
+  return (
+    <a
+      href={att.dataUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1.5 rounded-md bg-slate-950/60 ring-1 ring-slate-700 hover:ring-sky-500/60 px-2 py-1 text-[11px] transition"
+    >
+      <span className="text-red-400">📄</span>
+      <span className="font-medium text-slate-200">{label}</span>
+      <span className="text-slate-500 truncate max-w-[140px]">{att.name}</span>
+      <span className="text-slate-500">· {fmtBytes(att.size)}</span>
+    </a>
+  );
+}
+
 // ───────────────────────── Airline View ─────────────────────────
 function AirlineView(props: {
+  session: Extract<Session, { role: "airline" }>;
   uprs: UPR[];
   setUprs: React.Dispatch<React.SetStateAction<UPR[]>>;
   activeId: string | null;
@@ -205,17 +379,23 @@ function AirlineView(props: {
   broadcasts: Broadcast[];
   setBroadcasts: React.Dispatch<React.SetStateAction<Broadcast[]>>;
 }) {
-  const { uprs, setUprs, activeId, setActiveId, active, updateUPR, broadcasts, setBroadcasts } = props;
+  const { session, uprs, setUprs, activeId, setActiveId, active, updateUPR, broadcasts, setBroadcasts } = props;
+  const myUprs = useMemo(() => uprs.filter((u) => u.airline === session.airline), [uprs, session.airline]);
+
+  useEffect(() => {
+    if (!myUprs.find((u) => u.id === activeId)) setActiveId(myUprs[0]?.id ?? "");
+  }, [myUprs, activeId, setActiveId]);
 
   return (
     <div className="grid grid-cols-12 gap-5">
-      {/* Left: list + new */}
       <aside className="col-span-3 space-y-4">
-        <NewUPRForm onCreate={(u) => { setUprs((p) => [u, ...p]); setActiveId(u.id); }} />
-        <UPRList uprs={uprs} activeId={activeId} setActiveId={setActiveId} />
+        <NewUPRForm
+          airline={session.airline}
+          onCreate={(u) => { setUprs((p) => [u, ...p]); setActiveId(u.id); }}
+        />
+        <UPRList uprs={myUprs} activeId={activeId} setActiveId={setActiveId} />
       </aside>
 
-      {/* Middle: matrix + revisions */}
       <main className="col-span-6 space-y-5">
         {active ? (
           <>
@@ -228,28 +408,27 @@ function AirlineView(props: {
         )}
       </main>
 
-      {/* Right: communications */}
       <aside className="col-span-3 space-y-5">
         {active && (
           <SegmentChat
             upr={active}
-            author="Dispatcher"
+            author={`${session.airline} Dispatcher`}
             role="airline"
             onSend={(text) =>
               updateUPR(active.id, (u) => ({
                 ...u,
-                chat: [...u.chat, { id: uid(), author: "Dispatcher", role: "airline", text, ts: now() }],
+                chat: [...u.chat, { id: uid(), author: `${session.airline} Dispatcher`, role: "airline", text, ts: now() }],
               }))
             }
           />
         )}
-        <BroadcastPanel broadcasts={broadcasts} setBroadcasts={setBroadcasts} author="Dispatcher" role="Airline" />
+        <BroadcastPanel broadcasts={broadcasts} setBroadcasts={setBroadcasts} author={session.name} role={`Airline · ${session.airline}`} />
       </aside>
     </div>
   );
 }
 
-function NewUPRForm({ onCreate }: { onCreate: (u: UPR) => void }) {
+function NewUPRForm({ airline, onCreate }: { airline: string; onCreate: (u: UPR) => void }) {
   const [flightNo, setFlightNo] = useState("");
   const [callsign, setCallsign] = useState("");
   const [dep, setDep] = useState("");
@@ -258,6 +437,7 @@ function NewUPRForm({ onCreate }: { onCreate: (u: UPR) => void }) {
   const [firs, setFirs] = useState<string[]>(["", ""]);
   const [baseline, setBaseline] = useState(380);
   const [optimized, setOptimized] = useState(345);
+  const [pdf, setPdf] = useState<Attachment | undefined>(undefined);
 
   const setFir = (i: number, v: string) => setFirs((p) => p.map((x, idx) => (idx === i ? v : x)));
   const addRow = () => firs.length < 5 && setFirs([...firs, ""]);
@@ -282,13 +462,19 @@ function NewUPRForm({ onCreate }: { onCreate: (u: UPR) => void }) {
       arr: arr || "----",
       aircraft,
       createdAt: now(),
+      airline,
       segments: segs,
-      chat: [{ id: uid(), author: "System", role: "system", text: `UPR submitted across ${chosen.length} FIR(s).`, ts: now() }],
+      flightPlanPdf: pdf,
+      chat: [{
+        id: uid(), author: "System", role: "system",
+        text: `UPR submitted across ${chosen.length} FIR(s)${pdf ? ` · flight plan PDF attached (${pdf.name})` : ""}.`,
+        ts: now(),
+      }],
       baselineMinutes: baseline,
       optimizedMinutes: optimized,
       burnKgPerMin: 48,
     });
-    setFlightNo(""); setCallsign(""); setDep(""); setArr(""); setFirs(["", ""]);
+    setFlightNo(""); setCallsign(""); setDep(""); setArr(""); setFirs(["", ""]); setPdf(undefined);
   };
 
   return (
@@ -335,6 +521,10 @@ function NewUPRForm({ onCreate }: { onCreate: (u: UPR) => void }) {
         </button>
       </div>
 
+      <div className="mt-3">
+        <PdfPicker label="Plotted flight plan (PDF) — visible to all FIRs" value={pdf} onChange={setPdf} />
+      </div>
+
       <button
         onClick={submit}
         className="mt-3 w-full bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold rounded-lg py-2 text-sm transition"
@@ -378,7 +568,10 @@ function UPRList({ uprs, activeId, setActiveId }: { uprs: UPR[]; activeId: strin
                 <div className="font-medium text-sm">{u.callsign}</div>
                 <VerdictPill verdict={verdict} />
               </div>
-              <div className="text-[11px] text-slate-400">{u.dep} → {u.arr} · {u.segments.length} FIR</div>
+              <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                <span>{u.dep} → {u.arr} · {u.segments.length} FIR</span>
+                {u.flightPlanPdf && <span className="text-red-400" title="Flight plan PDF attached">📄</span>}
+              </div>
               <div className="mt-1.5 flex gap-1">
                 {u.segments.map((s, i) => (
                   <span key={i} className={`h-1.5 flex-1 rounded-full ${STATUS_META[s.status].bg}`} />
@@ -411,22 +604,30 @@ function VerdictPill({ verdict }: { verdict: string }) {
 function UPRHeader({ upr }: { upr: UPR }) {
   const verdict = computeVerdict(upr);
   return (
-    <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4 flex items-center justify-between">
-      <div>
-        <div className="flex items-center gap-2.5">
-          <span className="text-xl font-semibold">{upr.callsign}</span>
-          <span className="text-slate-400">·</span>
-          <span className="text-slate-300">{upr.flightNo}</span>
-          <VerdictPill verdict={verdict} />
+    <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl font-semibold">{upr.callsign}</span>
+            <span className="text-slate-400">·</span>
+            <span className="text-slate-300">{upr.flightNo}</span>
+            <VerdictPill verdict={verdict} />
+          </div>
+          <div className="text-xs text-slate-400 mt-1">
+            {upr.airline} · {upr.dep} → {upr.arr} · {upr.aircraft} · opened {fmtTime(upr.createdAt)}
+          </div>
         </div>
-        <div className="text-xs text-slate-400 mt-1">
-          {upr.dep} → {upr.arr} · {upr.aircraft} · opened {fmtTime(upr.createdAt)}
+        <div className="text-right text-xs text-slate-400">
+          <div>Baseline: <span className="text-slate-200">{upr.baselineMinutes} min</span></div>
+          <div>Optimized: <span className="text-emerald-300">{upr.optimizedMinutes} min</span></div>
         </div>
       </div>
-      <div className="text-right text-xs text-slate-400">
-        <div>Baseline: <span className="text-slate-200">{upr.baselineMinutes} min</span></div>
-        <div>Optimized: <span className="text-emerald-300">{upr.optimizedMinutes} min</span></div>
-      </div>
+      {upr.flightPlanPdf && (
+        <div className="mt-3 pt-3 border-t border-slate-800">
+          <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">Plotted flight plan — shared with all FIRs</div>
+          <PdfBadge att={upr.flightPlanPdf} label="Flight Plan" />
+        </div>
+      )}
     </div>
   );
 }
@@ -477,7 +678,7 @@ function AirlineSegmentRow({ seg, idx, upr, updateUPR }: { seg: Segment; idx: nu
   const saveEdit = () => {
     updateUPR(upr.id, (u) => {
       const segments = u.segments.map((x, i) =>
-        i === idx ? { ...x, entry, exit, fl, status: "pending" as SegStatus, revision: x.revision + 1, note: undefined, reason: undefined } : x
+        i === idx ? { ...x, entry, exit, fl, status: "pending" as SegStatus, revision: x.revision + 1, note: undefined, reason: undefined, amendmentPdf: undefined } : x
       );
       const chat: ChatMsg[] = [
         ...u.chat,
@@ -508,9 +709,10 @@ function AirlineSegmentRow({ seg, idx, upr, updateUPR }: { seg: Segment; idx: nu
         )}
       </div>
 
-      {seg.status === "amended" && seg.note && (
-        <div className="mt-2 text-xs bg-amber-500/10 ring-1 ring-amber-500/30 rounded-md p-2 text-amber-200">
-          <span className="font-semibold">ANSP proposal:</span> {seg.note}
+      {seg.status === "amended" && (seg.note || seg.amendmentPdf) && (
+        <div className="mt-2 text-xs bg-amber-500/10 ring-1 ring-amber-500/30 rounded-md p-2 text-amber-200 space-y-1.5">
+          {seg.note && <div><span className="font-semibold">ANSP proposal:</span> {seg.note}</div>}
+          {seg.amendmentPdf && <PdfBadge att={seg.amendmentPdf} label="Amendment chart" />}
         </div>
       )}
       {seg.status === "rejected" && seg.reason && (
@@ -544,9 +746,8 @@ function AirlineSegmentRow({ seg, idx, upr, updateUPR }: { seg: Segment; idx: nu
 
 // ───────────────────────── ANSP View ─────────────────────────
 function ANSPView(props: {
+  session: Extract<Session, { role: "ansp" }>;
   uprs: UPR[];
-  anspFir: string;
-  setAnspFir: (f: string) => void;
   activeId: string | null;
   setActiveId: (id: string) => void;
   active: UPR | null;
@@ -554,7 +755,8 @@ function ANSPView(props: {
   broadcasts: Broadcast[];
   setBroadcasts: React.Dispatch<React.SetStateAction<Broadcast[]>>;
 }) {
-  const { uprs, anspFir, setAnspFir, activeId, setActiveId, active, updateUPR, broadcasts, setBroadcasts } = props;
+  const { session, uprs, activeId, setActiveId, active, updateUPR, broadcasts, setBroadcasts } = props;
+  const anspFir = session.fir;
   const queue = useMemo(() => uprs.filter((u) => u.segments.some((s) => s.fir === anspFir)), [uprs, anspFir]);
   const firName = FIRS.find((f) => f.code === anspFir)?.name;
 
@@ -568,17 +770,10 @@ function ANSPView(props: {
     <div className="grid grid-cols-12 gap-5">
       <aside className="col-span-3 space-y-4">
         <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
-          <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-2">FIR Hub Filter</div>
-          <select
-            value={anspFir}
-            onChange={(e) => setAnspFir(e.target.value)}
-            className="w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-2 text-sm focus:ring-sky-500 outline-none"
-          >
-            {FIRS.map((f) => (
-              <option key={f.code} value={f.code}>{f.code} — {f.name}</option>
-            ))}
-          </select>
-          <div className="text-[11px] text-slate-500 mt-2">Acting as {anspFir} {firName} controller</div>
+          <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1">Acting as</div>
+          <div className="text-lg font-semibold">{anspFir}</div>
+          <div className="text-xs text-slate-400">{firName} FIR Controller</div>
+          <div className="text-[10px] text-slate-500 mt-2">Scope locked at sign-in — sign out to switch FIR.</div>
         </div>
         <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-2">
           <div className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-slate-400">Targeted Queue ({queue.length})</div>
@@ -598,7 +793,10 @@ function ANSPView(props: {
                     <span className="font-medium text-sm">{u.callsign}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${m.bg} ${m.color}`}>{m.label}</span>
                   </div>
-                  <div className="text-[11px] text-slate-400">{seg.entry} → {seg.exit} · {seg.fl}</div>
+                  <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <span>{seg.entry} → {seg.exit} · {seg.fl}</span>
+                    {u.flightPlanPdf && <span className="text-red-400" title="Flight plan PDF">📄</span>}
+                  </div>
                 </button>
               );
             })}
@@ -642,6 +840,7 @@ function ANSPView(props: {
 function ANSPDecisionPanel({ upr, seg, fir, updateUPR }: { upr: UPR; seg: Segment; fir: string; updateUPR: (id: string, fn: (u: UPR) => UPR) => void }) {
   const [mode, setMode] = useState<null | "amend" | "reject">(null);
   const [note, setNote] = useState("");
+  const [amendPdf, setAmendPdf] = useState<Attachment | undefined>(undefined);
   const [reason, setReason] = useState(REJECT_REASONS[0]);
   const locked = seg.status === "amended" || seg.status === "approved" || seg.status === "rejected";
 
@@ -651,7 +850,7 @@ function ANSPDecisionPanel({ upr, seg, fir, updateUPR }: { upr: UPR; seg: Segmen
       segments: u.segments.map((s) => (s.fir === fir ? { ...s, status, ...extra } : s)),
       chat: log ? [...u.chat, { id: uid(), author: "System", role: "system", text: log, ts: now() }] : u.chat,
     }));
-    setMode(null); setNote("");
+    setMode(null); setNote(""); setAmendPdf(undefined);
   };
 
   return (
@@ -667,15 +866,16 @@ function ANSPDecisionPanel({ upr, seg, fir, updateUPR }: { upr: UPR; seg: Segmen
       </div>
 
       {locked && seg.status === "amended" && (
-        <div className="text-xs bg-amber-500/10 ring-1 ring-amber-500/30 text-amber-200 rounded-md p-2 mb-3">
-          Locked — awaiting airline revision. Your proposal: <em>{seg.note}</em>
+        <div className="text-xs bg-amber-500/10 ring-1 ring-amber-500/30 text-amber-200 rounded-md p-2 mb-3 space-y-1.5">
+          <div>Locked — awaiting airline revision. Your proposal: <em>{seg.note}</em></div>
+          {seg.amendmentPdf && <PdfBadge att={seg.amendmentPdf} label="Amendment chart" />}
         </div>
       )}
 
       <div className="grid grid-cols-3 gap-2">
         <button
           disabled={locked}
-          onClick={() => setStatus("approved", { note: undefined, reason: undefined }, `${fir} approved segment for ${upr.callsign}.`)}
+          onClick={() => setStatus("approved", { note: undefined, reason: undefined, amendmentPdf: undefined }, `${fir} approved segment for ${upr.callsign}.`)}
           className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-950 font-semibold py-2 rounded-lg text-sm"
         >
           ✓ Approve Route Segment
@@ -704,9 +904,14 @@ function ANSPDecisionPanel({ upr, seg, fir, updateUPR }: { upr: UPR; seg: Segmen
             placeholder="Describe the required amendment (waypoints, flight level, entry/exit point changes)…"
             className="w-full h-24 bg-slate-950/60 ring-1 ring-slate-800 rounded-md p-2 text-sm focus:ring-amber-500 outline-none"
           />
+          <PdfPicker label="Recommended amendment chart (PDF)" value={amendPdf} onChange={setAmendPdf} />
           <button
             disabled={!note.trim()}
-            onClick={() => setStatus("amended", { note }, `${fir} proposed amendment: "${note}"`)}
+            onClick={() => setStatus(
+              "amended",
+              { note, amendmentPdf: amendPdf },
+              `${fir} proposed amendment${amendPdf ? ` (PDF attached: ${amendPdf.name})` : ""}: "${note}"`,
+            )}
             className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-amber-950 font-semibold py-1.5 rounded-md text-sm"
           >
             Submit Amendment Request
@@ -753,7 +958,7 @@ function ExecView({ uprs }: { uprs: UPR[] }) {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Executive Analytics Hub</h1>
-        <p className="text-sm text-slate-400">Operational impact across all approved UPR trial paths.</p>
+        <p className="text-sm text-slate-400">Read-only operational impact across all approved UPR trial paths.</p>
       </div>
       <div className="grid grid-cols-4 gap-4">
         {stats.map((s) => (
@@ -770,7 +975,7 @@ function ExecView({ uprs }: { uprs: UPR[] }) {
         <div className="text-sm font-semibold mb-3">Recent UPR Activity</div>
         <table className="w-full text-sm">
           <thead className="text-[11px] uppercase tracking-wider text-slate-400">
-            <tr><th className="text-left py-2">Callsign</th><th className="text-left">Route</th><th className="text-left">FIRs</th><th className="text-right">Δ min</th><th className="text-right">CO₂ avoided</th><th className="text-right">Verdict</th></tr>
+            <tr><th className="text-left py-2">Callsign</th><th className="text-left">Airline</th><th className="text-left">Route</th><th className="text-left">FIRs</th><th className="text-right">Δ min</th><th className="text-right">CO₂ avoided</th><th className="text-right">Verdict</th></tr>
           </thead>
           <tbody>
             {uprs.map((u) => {
@@ -779,6 +984,7 @@ function ExecView({ uprs }: { uprs: UPR[] }) {
               return (
                 <tr key={u.id} className="border-t border-slate-800">
                   <td className="py-2 font-mono">{u.callsign}</td>
+                  <td className="text-slate-300">{u.airline}</td>
                   <td>{u.dep} → {u.arr}</td>
                   <td className="text-slate-400">{u.segments.map((s) => s.fir).join(" → ")}</td>
                   <td className="text-right text-emerald-300">{dm}</td>
@@ -800,7 +1006,7 @@ function SegmentChat({ upr, author, role, onSend }: { upr: UPR; author: string; 
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [upr.chat.length]);
 
-  const participants = ["Airline Dispatcher", ...upr.segments.map((s) => `${s.fir} ${FIRS.find((f) => f.code === s.fir)?.name ?? ""}`)];
+  const participants = [`${upr.airline} Dispatcher`, ...upr.segments.map((s) => `${s.fir} ${FIRS.find((f) => f.code === s.fir)?.name ?? ""}`)];
 
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 flex flex-col h-[420px]">
