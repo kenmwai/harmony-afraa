@@ -115,11 +115,11 @@ const seedUPRs = (): UPR[] => [
 ];
 
 // ───────────────────────── Auth / Role gate ─────────────────────────
-type Role = "airline" | "ansp" | "exec";
+type Role = "airline" | "ansp" | "admin";
 type Session =
   | { role: "airline"; name: string; airline: string }
   | { role: "ansp"; name: string; fir: string }
-  | { role: "exec"; name: string };
+  | { role: "admin"; name: string };
 
 function UPRApp() {
   const [session, setSession] = useState<Session | null>(null);
