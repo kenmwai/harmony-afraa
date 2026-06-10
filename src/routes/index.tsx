@@ -1,409 +1,176 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  FIRS, REJECT_REASONS, STATUS_META,
+  type AppSession, type BroadcastRow, type ChatRow, type SegmentRow, type SegStatus, type UPRRow,
+  fmtBytes, fmtTime,
+} from "@/lib/upr-types";
+import { uploadPdf, getSignedUrl } from "@/lib/upr-storage";
 
 export const Route = createFileRoute("/")({
   ssr: false,
   head: () => ({
     meta: [
       { title: "UPR Coordination Platform" },
-      { name: "description", content: "African User Preferred Routes coordination MVP — segment-by-segment ANSP negotiation." },
+      { name: "description", content: "African User Preferred Routes coordination — segment-by-segment ANSP negotiation." },
     ],
   }),
-  component: UPRApp,
+  component: Gate,
 });
 
-// ───────────────────────── Data ─────────────────────────
-const FIRS = [
-  { code: "HCSM", name: "Mogadishu" },
-  { code: "HKNA", name: "Nairobi" },
-  { code: "HTDC", name: "Dar es Salaam" },
-  { code: "HAAA", name: "Addis Ababa" },
-  { code: "HUEC", name: "Entebbe" },
-  { code: "FACA", name: "Cape Town" },
-  { code: "FIMM", name: "Mauritius" },
-  { code: "DGAC", name: "Accra" },
-  { code: "DNKK", name: "Kano" },
-  { code: "GVSC", name: "Sal Oceanic" },
-];
-const REJECT_REASONS = [
-  "Military activity / restricted airspace",
-  "Severe weather / convective conflict",
-  "Capacity / sector saturation",
-  "Traffic conflict with crossing flow",
-  "Procedural / regulatory non-compliance",
-];
+// ─────────── Gate: session + role → app, /auth, or pending ───────────
+function Gate() {
+  const nav = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState<AppSession | null>(null);
+  const [pending, setPending] = useState<{ email: string; fullName: string; requestedRole: string | null; requestedScope: string | null } | null>(null);
 
-type SegStatus = "pending" | "approved" | "amended" | "rejected";
-type Attachment = { name: string; size: number; dataUrl: string };
-type Segment = {
-  fir: string;
-  status: SegStatus;
-  note?: string;
-  reason?: string;
-  entry: string;
-  exit: string;
-  fl: string;
-  revision: number;
-  amendmentPdf?: Attachment;
-};
-type ChatMsg = { id: string; author: string; role: "airline" | "ansp" | "system"; text: string; ts: number };
-type UPR = {
-  id: string;
-  callsign: string;
-  flightNo: string;
-  dep: string;
-  arr: string;
-  aircraft: string;
-  createdAt: number;
-  segments: Segment[];
-  chat: ChatMsg[];
-  flightPlanPdf?: Attachment;
-  baselineMinutes: number;
-  optimizedMinutes: number;
-  burnKgPerMin: number;
-  airline: string;
-};
-type Broadcast = { id: string; author: string; role: string; text: string; ts: number; severity: "info" | "warn" | "critical" };
+  const load = useCallback(async () => {
+    const { data: s } = await supabase.auth.getSession();
+    if (!s.session) { nav({ to: "/auth" }); return; }
+    const uid = s.session.user.id;
+    const [{ data: prof }, { data: roles }] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", uid).maybeSingle(),
+      supabase.from("user_roles").select("role,scope").eq("user_id", uid),
+    ]);
+    if (!prof) { setLoading(false); return; }
+    const r = roles?.[0];
+    if (!r || !prof.approved) {
+      setPending({ email: prof.email, fullName: prof.full_name, requestedRole: prof.requested_role, requestedScope: prof.requested_scope });
+      setSession(null);
+    } else {
+      setSession({ userId: uid, email: prof.email, fullName: prof.full_name, role: r.role as any, scope: r.scope });
+      setPending(null);
+    }
+    setLoading(false);
+  }, [nav]);
 
-// ───────────────────────── Helpers ─────────────────────────
-const uid = () => Math.random().toString(36).slice(2, 10);
-const now = () => Date.now();
-const fmtTime = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
-const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`);
+  useEffect(() => {
+    load();
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") nav({ to: "/auth" });
+      if (event === "SIGNED_IN" || event === "USER_UPDATED") load();
+    });
+    return () => sub.subscription.unsubscribe();
+  }, [load, nav]);
 
-const readPdf = (file: File): Promise<Attachment> =>
-  new Promise((resolve, reject) => {
-    if (file.type !== "application/pdf") return reject(new Error("PDF only"));
-    if (file.size > 10 * 1024 * 1024) return reject(new Error("Max 10 MB"));
-    const reader = new FileReader();
-    reader.onload = () => resolve({ name: file.name, size: file.size, dataUrl: String(reader.result) });
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
+  if (loading) return <div className="min-h-screen grid place-items-center bg-slate-950 text-slate-400 text-sm">Loading…</div>;
+  if (pending) return <PendingScreen pending={pending} onRefresh={load} />;
+  if (!session) return null;
+  return <UPRApp session={session} />;
+}
 
-const STATUS_META: Record<SegStatus, { color: string; bg: string; ring: string; label: string; dot: string }> = {
-  pending: { color: "text-slate-300", bg: "bg-slate-700/60", ring: "ring-slate-500/40", label: "Pending", dot: "bg-slate-400" },
-  approved: { color: "text-emerald-50", bg: "bg-emerald-500", ring: "ring-emerald-300/50", label: "Approved", dot: "bg-emerald-400" },
-  amended: { color: "text-amber-50", bg: "bg-amber-500", ring: "ring-amber-300/50", label: "Amendment", dot: "bg-amber-400" },
-  rejected: { color: "text-red-50", bg: "bg-red-500", ring: "ring-red-300/50", label: "Rejected", dot: "bg-red-400" },
-};
+function PendingScreen({ pending, onRefresh }: { pending: { email: string; fullName: string; requestedRole: string | null; requestedScope: string | null }; onRefresh: () => void }) {
+  const [claiming, setClaiming] = useState(false);
+  const [msg, setMsg] = useState("");
+  const claimAdmin = async () => {
+    setClaiming(true); setMsg("");
+    const { data, error } = await supabase.rpc("claim_first_admin");
+    setClaiming(false);
+    if (error) { setMsg(error.message); return; }
+    if (data) { setMsg("You are now the platform administrator."); onRefresh(); }
+    else setMsg("An administrator already exists — wait for approval.");
+  };
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 grid place-items-center px-6">
+      <div className="max-w-md w-full rounded-2xl bg-slate-900/70 ring-1 ring-slate-800 p-6">
+        <div className="text-amber-300 text-xs uppercase tracking-wider mb-2">Pending administrator approval</div>
+        <h1 className="text-xl font-semibold">Hi {pending.fullName}</h1>
+        <p className="text-sm text-slate-400 mt-2">
+          Your account ({pending.email}) is waiting for an administrator to grant role
+          <span className="text-slate-200"> {pending.requestedRole ?? "—"}</span>
+          {pending.requestedScope ? <> · scope <span className="text-slate-200">{pending.requestedScope}</span></> : null}.
+        </p>
+        <div className="mt-4 flex gap-2">
+          <button onClick={onRefresh} className="flex-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold rounded-md py-2 text-sm">Refresh status</button>
+          <button onClick={() => supabase.auth.signOut()} className="px-3 ring-1 ring-slate-700 hover:bg-slate-800 rounded-md py-2 text-xs">Sign out</button>
+        </div>
+        <div className="mt-5 pt-4 border-t border-slate-800">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">Platform setup</div>
+          <p className="text-[11px] text-slate-500 mb-2">If no administrator exists yet, claim the role to bootstrap the platform.</p>
+          <button onClick={claimAdmin} disabled={claiming} className="w-full text-xs ring-1 ring-fuchsia-500/40 hover:bg-fuchsia-500/10 text-fuchsia-300 rounded-md py-1.5">
+            {claiming ? "…" : "Claim first-admin role"}
+          </button>
+          {msg && <div className="mt-2 text-[11px] text-slate-300">{msg}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-// ───────────────────────── Seed ─────────────────────────
-const seedUPRs = (): UPR[] => [
-  {
-    id: uid(),
-    callsign: "KQA310",
-    flightNo: "KQ 310",
-    dep: "HKJK",
-    arr: "FACT",
-    aircraft: "B788",
-    createdAt: now() - 3600_000,
-    airline: "Kenya Airways",
-    segments: [
-      { fir: "HKNA", status: "approved", entry: "ELGON", exit: "KOMOB", fl: "FL380", revision: 1 },
-      { fir: "HTDC", status: "amended", note: "Shift exit point 20NM east of KEMBO due crossing traffic.", entry: "KOMOB", exit: "KEMBO", fl: "FL380", revision: 1 },
-      { fir: "FIMM", status: "pending", entry: "KEMBO", exit: "TIVLI", fl: "FL400", revision: 1 },
-    ],
-    chat: [
-      { id: uid(), author: "System", role: "system", text: "UPR request opened. 3 FIR segments dispatched.", ts: now() - 3500_000 },
-      { id: uid(), author: "HTDC Dar es Salaam", role: "ansp", text: "We need lateral offset near KEMBO — crossing flow at FL380.", ts: now() - 1800_000 },
-    ],
-    baselineMinutes: 412,
-    optimizedMinutes: 367,
-    burnKgPerMin: 52,
-  },
-];
-
-// ───────────────────────── Auth / Role gate ─────────────────────────
-type Role = "airline" | "ansp" | "admin";
-type Session =
-  | { role: "airline"; name: string; airline: string }
-  | { role: "ansp"; name: string; fir: string }
-  | { role: "admin"; name: string };
-
-function UPRApp() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [uprs, setUprs] = useState<UPR[]>(() => seedUPRs());
+// ─────────── Main app shell ───────────
+function UPRApp({ session }: { session: AppSession }) {
+  const [uprs, setUprs] = useState<UPRRow[]>([]);
+  const [segments, setSegments] = useState<SegmentRow[]>([]);
+  const [chat, setChat] = useState<ChatRow[]>([]);
+  const [broadcasts, setBroadcasts] = useState<BroadcastRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [broadcasts, setBroadcasts] = useState<Broadcast[]>([
-    { id: uid(), author: "HKNA Nairobi", role: "ANSP", text: "Nairobi FIR radar down for maintenance 1200Z–1400Z.", ts: now() - 7200_000, severity: "warn" },
-  ]);
+
+  const refetch = useCallback(async () => {
+    const [u, s, c, b] = await Promise.all([
+      supabase.from("uprs").select("*").order("created_at", { ascending: false }),
+      supabase.from("segments").select("*").order("order_idx"),
+      supabase.from("chat_messages").select("*").order("created_at"),
+      supabase.from("broadcasts").select("*").order("created_at", { ascending: false }),
+    ]);
+    if (u.data) setUprs(u.data as any);
+    if (s.data) setSegments(s.data as any);
+    if (c.data) setChat(c.data as any);
+    if (b.data) setBroadcasts(b.data as any);
+  }, []);
+
+  useEffect(() => { refetch(); }, [refetch]);
+
+  // Realtime
+  useEffect(() => {
+    const ch = supabase
+      .channel("upr-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "uprs" }, () => refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "segments" }, () => refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, () => refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "broadcasts" }, () => refetch())
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [refetch]);
 
   const active = uprs.find((u) => u.id === activeId) ?? null;
-
-  const updateUPR = (id: string, fn: (u: UPR) => UPR) =>
-    setUprs((prev) => prev.map((u) => (u.id === id ? fn(u) : u)));
-
-  if (!session) return <SignIn onSignIn={(s) => { setActiveId(null); setSession(s); }} />;
+  const activeSegments = useMemo(() => segments.filter((s) => s.upr_id === activeId).sort((a, b) => a.order_idx - b.order_idx), [segments, activeId]);
+  const activeChat = useMemo(() => chat.filter((m) => m.upr_id === activeId), [chat, activeId]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      <TopBar session={session} onSignOut={() => setSession(null)} />
+      <TopBar session={session} />
       <div className="mx-auto max-w-[1500px] px-6 py-6">
         {session.role === "airline" && (
           <AirlineView
-            session={session}
-            uprs={uprs}
-            setUprs={setUprs}
-            activeId={activeId}
-            setActiveId={setActiveId}
-            active={active}
-            updateUPR={updateUPR}
-            broadcasts={broadcasts}
-            setBroadcasts={setBroadcasts}
+            session={session} uprs={uprs} segments={segments} broadcasts={broadcasts}
+            activeId={activeId} setActiveId={setActiveId}
+            active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
         )}
         {session.role === "ansp" && (
           <ANSPView
-            session={session}
-            uprs={uprs}
-            activeId={activeId}
-            setActiveId={setActiveId}
-            active={active}
-            updateUPR={updateUPR}
-            broadcasts={broadcasts}
-            setBroadcasts={setBroadcasts}
+            session={session} uprs={uprs} segments={segments} broadcasts={broadcasts}
+            activeId={activeId} setActiveId={setActiveId}
+            active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
         )}
-        {session.role === "admin" && <AdminView uprs={uprs} />}
+        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} />}
       </div>
     </div>
   );
 }
 
-const ADMIN_PASSCODE = "UPR-ADMIN-2026";
-const PASSWORD_RULES = [
-  { test: (p: string) => p.length >= 8, label: "At least 8 characters" },
-  { test: (p: string) => /[A-Z]/.test(p), label: "One uppercase letter" },
-  { test: (p: string) => /[a-z]/.test(p), label: "One lowercase letter" },
-  { test: (p: string) => /\d/.test(p), label: "One digit" },
-  { test: (p: string) => /[^A-Za-z0-9]/.test(p), label: "One special character" },
-];
-const ACCOUNTS_KEY = "upr.accounts.v1";
-type StoredAccount = { pwd: string; name: string };
-const loadAccounts = (): Record<string, StoredAccount> => {
-  try {
-    if (typeof window === "undefined") return {};
-    return JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || "{}");
-  } catch { return {}; }
-};
-const saveAccounts = (a: Record<string, StoredAccount>) => {
-  try { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(a)); } catch {}
-};
-const accountKey = (role: "airline" | "ansp", scope: string) => `${role}:${scope.trim().toLowerCase()}`;
-// lightweight obfuscation — MVP only; not a real hash
-const obf = (s: string) => { try { return typeof window === "undefined" ? s : btoa(unescape(encodeURIComponent(s))); } catch { return s; } };
-
-function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
-  const [role, setRole] = useState<Exclude<Role, "admin">>("airline");
-  const [name, setName] = useState("");
-  const [airline, setAirline] = useState("Kenya Airways");
-  const [fir, setFir] = useState("HTDC");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [err, setErr] = useState("");
-  const [showAdmin, setShowAdmin] = useState(false);
-  const [adminCode, setAdminCode] = useState("");
-  const [adminErr, setAdminErr] = useState("");
-
-  const scope = role === "airline" ? airline : fir;
-  const accounts = loadAccounts();
-  const existing = accounts[accountKey(role, scope)];
-  const isRegister = !existing;
-
-  const passwordChecks = PASSWORD_RULES.map((r) => ({ label: r.label, ok: r.test(password) }));
-  const passwordValid = passwordChecks.every((c) => c.ok);
-
-  const canSubmit =
-    name.trim().length > 0 &&
-    password.length > 0 &&
-    (isRegister ? passwordValid && password === confirm : true);
-
-  const submit = () => {
-    setErr("");
-    if (!name.trim()) return setErr("Operator name is required");
-    if (isRegister) {
-      if (!passwordValid) return setErr("Password does not meet the strict policy");
-      if (password !== confirm) return setErr("Passwords do not match");
-      const next = { ...accounts, [accountKey(role, scope)]: { pwd: obf(password), name: name.trim() } };
-      saveAccounts(next);
-    } else {
-      if (existing.pwd !== obf(password)) return setErr("Invalid password for this account");
-    }
-    if (role === "airline") onSignIn({ role, name: name.trim(), airline });
-    else onSignIn({ role, name: name.trim(), fir });
-  };
-
-  const submitAdmin = () => {
-    if (adminCode.trim() === ADMIN_PASSCODE) {
-      onSignIn({ role: "admin", name: "Administrator" });
-    } else {
-      setAdminErr("Invalid admin passcode");
-    }
-  };
-
-  const roles: { id: Exclude<Role, "admin">; label: string; sub: string }[] = [
-    { id: "airline", label: "Airline Dispatcher", sub: "Submit UPRs · attach flight plan PDF · respond to amendments" },
-    { id: "ansp", label: "ANSP / Regulator", sub: "Review FIR segment · approve / amend with PDF / reject" },
-  ];
-
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans grid place-items-center px-6 py-10">
-      <div className="w-full max-w-md rounded-2xl bg-slate-900/70 ring-1 ring-slate-800 p-6 shadow-2xl">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">U</div>
-          <div>
-            <div className="font-semibold tracking-tight">UPR Coordination Platform</div>
-            <div className="text-[11px] text-slate-400 -mt-0.5">Sign in to your role</div>
-          </div>
-        </div>
-
-        <div className="space-y-1.5 mb-4">
-          {roles.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => { setRole(r.id); setErr(""); }}
-              className={`w-full text-left rounded-lg px-3 py-2.5 ring-1 transition ${
-                role === r.id ? "bg-slate-800 ring-sky-500/60" : "bg-slate-950/40 ring-slate-800 hover:bg-slate-800/50"
-              }`}
-            >
-              <div className="text-sm font-medium">{r.label}</div>
-              <div className="text-[11px] text-slate-400">{r.sub}</div>
-            </button>
-          ))}
-        </div>
-
-        <Input label="Operator name" value={name} onChange={setName} placeholder="Jane Doe" />
-
-        {role === "airline" && (
-          <label className="block mt-2">
-            <span className="text-[10px] uppercase tracking-wider text-slate-400">Airline</span>
-            <input
-              value={airline}
-              onChange={(e) => setAirline(e.target.value)}
-              className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
-            />
-          </label>
-        )}
-        {role === "ansp" && (
-          <label className="block mt-2">
-            <span className="text-[10px] uppercase tracking-wider text-slate-400">FIR Hub</span>
-            <select
-              value={fir}
-              onChange={(e) => setFir(e.target.value)}
-              className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
-            >
-              {FIRS.map((f) => <option key={f.code} value={f.code}>{f.code} — {f.name}</option>)}
-            </select>
-          </label>
-        )}
-
-        <label className="block mt-2">
-          <span className="text-[10px] uppercase tracking-wider text-slate-400">
-            Password {isRegister ? "· create new account" : "· existing account"}
-          </span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => { setPassword(e.target.value); setErr(""); }}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
-            placeholder={isRegister ? "Set a strong password" : "Enter your password"}
-            className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
-          />
-        </label>
-
-        {isRegister && (
-          <>
-            <label className="block mt-2">
-              <span className="text-[10px] uppercase tracking-wider text-slate-400">Confirm password</span>
-              <input
-                type="password"
-                value={confirm}
-                onChange={(e) => { setConfirm(e.target.value); setErr(""); }}
-                onKeyDown={(e) => e.key === "Enter" && submit()}
-                className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
-              />
-            </label>
-            <ul className="mt-2 grid grid-cols-2 gap-x-2 gap-y-0.5">
-              {passwordChecks.map((c) => (
-                <li key={c.label} className={`text-[10px] flex items-center gap-1 ${c.ok ? "text-emerald-400" : "text-slate-500"}`}>
-                  <span className={`h-1 w-1 rounded-full ${c.ok ? "bg-emerald-400" : "bg-slate-600"}`} />
-                  {c.label}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-
-        {err && <div className="mt-2 text-[11px] text-rose-400">{err}</div>}
-
-        <button
-          onClick={submit}
-          disabled={!canSubmit}
-          className="mt-4 w-full bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold rounded-lg py-2.5 text-sm transition"
-        >
-          {isRegister ? "Create account & enter" : "Sign in"}
-        </button>
-
-        <div className="text-[10px] text-slate-500 text-center mt-3">
-          Strict role-based access · password policy enforced
-        </div>
-
-        <div className="mt-4 pt-3 border-t border-slate-800">
-          {!showAdmin ? (
-            <button
-              onClick={() => setShowAdmin(true)}
-              className="w-full text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300 transition"
-            >
-              Admin access
-            </button>
-          ) : (
-            <div className="space-y-2">
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wider text-slate-400">Admin passcode</span>
-                <input
-                  type="password"
-                  value={adminCode}
-                  onChange={(e) => { setAdminCode(e.target.value); setAdminErr(""); }}
-                  onKeyDown={(e) => e.key === "Enter" && submitAdmin()}
-                  placeholder="Enter backend-issued passcode"
-                  className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-fuchsia-500 outline-none"
-                />
-              </label>
-              {adminErr && <div className="text-[11px] text-rose-400">{adminErr}</div>}
-              <div className="flex gap-2">
-                <button
-                  onClick={submitAdmin}
-                  className="flex-1 bg-fuchsia-500 hover:bg-fuchsia-400 text-slate-950 font-semibold rounded-md py-1.5 text-xs"
-                >
-                  Authenticate admin
-                </button>
-                <button
-                  onClick={() => { setShowAdmin(false); setAdminCode(""); setAdminErr(""); }}
-                  className="px-3 bg-slate-800 hover:bg-slate-700 rounded-md py-1.5 text-xs text-slate-300"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ───────────────────────── TopBar ─────────────────────────
-function TopBar({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
-  const roleLabel =
-    session.role === "airline" ? `${session.airline} · Dispatcher` :
-    session.role === "ansp" ? `${session.fir} ${FIRS.find((f) => f.code === session.fir)?.name ?? ""} · Controller` :
+function TopBar({ session }: { session: AppSession }) {
+  const label =
+    session.role === "airline" ? `${session.scope} · Dispatcher` :
+    session.role === "ansp" ? `${session.scope} ${FIRS.find((f) => f.code === session.scope)?.name ?? ""} · Controller` :
     "Admin · Oversight";
-  const roleColor =
+  const color =
     session.role === "airline" ? "from-sky-500 to-cyan-500" :
     session.role === "ansp" ? "from-amber-500 to-orange-500" :
-    "from-emerald-500 to-teal-500";
-
+    "from-fuchsia-500 to-pink-500";
   return (
     <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
       <div className="mx-auto max-w-[1500px] px-6 py-3 flex items-center justify-between gap-6">
@@ -411,16 +178,14 @@ function TopBar({ session, onSignOut }: { session: Session; onSignOut: () => voi
           <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">U</div>
           <div>
             <div className="font-semibold tracking-tight">UPR Coordination Platform</div>
-            <div className="text-[11px] text-slate-400 -mt-0.5">African User Preferred Routes · MVP</div>
+            <div className="text-[11px] text-slate-400 -mt-0.5">African User Preferred Routes · Production</div>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <div className={`px-3 py-1.5 rounded-lg bg-gradient-to-r ${roleColor} text-slate-950 text-xs font-semibold`}>
-            {roleLabel}
-          </div>
+          <div className={`px-3 py-1.5 rounded-lg bg-gradient-to-r ${color} text-slate-950 text-xs font-semibold`}>{label}</div>
           <div className="text-right leading-tight">
-            <div className="text-sm font-medium">{session.name}</div>
-            <button onClick={onSignOut} className="text-[11px] text-slate-400 hover:text-sky-300">Sign out</button>
+            <div className="text-sm font-medium">{session.fullName}</div>
+            <button onClick={() => supabase.auth.signOut()} className="text-[11px] text-slate-400 hover:text-sky-300">Sign out</button>
           </div>
         </div>
       </div>
@@ -428,194 +193,151 @@ function TopBar({ session, onSignOut }: { session: Session; onSignOut: () => voi
   );
 }
 
-// ───────────────────────── PDF Attachment helpers (UI) ─────────────────────────
-function PdfPicker({ label, value, onChange }: { label: string; value?: Attachment; onChange: (a: Attachment | undefined) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+// ─────────── PDF picker + signed-URL badge ───────────
+function PdfPicker({ label, onPick, attached }: { label: string; onPick: (f: File) => Promise<void>; attached?: { name: string; size: number; path: string } }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  const handle = async (f: File | undefined) => {
-    setErr(null);
+  const handle = async (f?: File) => {
     if (!f) return;
-    try {
-      const att = await readPdf(f);
-      onChange(att);
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to read PDF");
-    }
+    setErr(null); setBusy(true);
+    try { await onPick(f); } catch (e: any) { setErr(e?.message ?? "Failed"); }
+    setBusy(false);
   };
-
+  if (attached) return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">{label}</div>
+      <div className="flex items-center justify-between gap-2 rounded-md bg-slate-950/60 ring-1 ring-slate-800 px-2.5 py-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-red-400">📄</span>
+          <div className="min-w-0">
+            <div className="text-xs font-medium truncate">{attached.name}</div>
+            <div className="text-[10px] text-slate-500">{fmtBytes(attached.size)}</div>
+          </div>
+        </div>
+        <SignedOpenButton path={attached.path} />
+      </div>
+    </div>
+  );
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">{label}</div>
-      {value ? (
-        <div className="flex items-center justify-between gap-2 rounded-md bg-slate-950/60 ring-1 ring-slate-800 px-2.5 py-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-red-400 text-base">📄</span>
-            <div className="min-w-0">
-              <div className="text-xs font-medium truncate">{value.name}</div>
-              <div className="text-[10px] text-slate-500">{fmtBytes(value.size)}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <a href={value.dataUrl} target="_blank" rel="noreferrer" className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700">Open</a>
-            <button onClick={() => onChange(undefined)} className="text-[10px] px-2 py-1 rounded ring-1 ring-slate-700 hover:bg-slate-800">Remove</button>
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => inputRef.current?.click()}
-          className="w-full rounded-md bg-slate-950/60 ring-1 ring-dashed ring-slate-700 hover:ring-sky-500/60 px-2.5 py-3 text-xs text-slate-400 hover:text-sky-300 transition"
-        >
-          + Attach PDF (max 10 MB)
-        </button>
-      )}
-      <input
-        ref={inputRef}
-        type="file"
-        accept="application/pdf"
-        className="hidden"
-        onChange={(e) => handle(e.target.files?.[0])}
-      />
+      <button onClick={() => ref.current?.click()} disabled={busy} className="w-full rounded-md bg-slate-950/60 ring-1 ring-dashed ring-slate-700 hover:ring-sky-500/60 px-2.5 py-3 text-xs text-slate-400 hover:text-sky-300 transition">
+        {busy ? "Uploading…" : "+ Attach PDF (max 10 MB)"}
+      </button>
+      <input ref={ref} type="file" accept="application/pdf" className="hidden" onChange={(e) => handle(e.target.files?.[0])} />
       {err && <div className="text-[10px] text-red-400 mt-1">{err}</div>}
     </div>
   );
 }
-
-function PdfBadge({ att, label }: { att: Attachment; label: string }) {
+function SignedOpenButton({ path }: { path: string }) {
+  const [busy, setBusy] = useState(false);
+  const open = async () => {
+    setBusy(true);
+    try { const url = await getSignedUrl(path); window.open(url, "_blank"); } catch {}
+    setBusy(false);
+  };
+  return <button onClick={open} disabled={busy} className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700">{busy ? "…" : "Open"}</button>;
+}
+function PdfBadge({ path, name, size, label }: { path: string; name: string; size: number; label: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => { getSignedUrl(path).then(setUrl).catch(() => {}); }, [path]);
   return (
-    <a
-      href={att.dataUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex items-center gap-1.5 rounded-md bg-slate-950/60 ring-1 ring-slate-700 hover:ring-sky-500/60 px-2 py-1 text-[11px] transition"
-    >
+    <a href={url ?? "#"} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-md bg-slate-950/60 ring-1 ring-slate-700 hover:ring-sky-500/60 px-2 py-1 text-[11px]">
       <span className="text-red-400">📄</span>
       <span className="font-medium text-slate-200">{label}</span>
-      <span className="text-slate-500 truncate max-w-[140px]">{att.name}</span>
-      <span className="text-slate-500">· {fmtBytes(att.size)}</span>
+      <span className="text-slate-500 truncate max-w-[140px]">{name}</span>
+      <span className="text-slate-500">· {fmtBytes(size)}</span>
     </a>
   );
 }
 
-// ───────────────────────── Airline View ─────────────────────────
-function AirlineView(props: {
-  session: Extract<Session, { role: "airline" }>;
-  uprs: UPR[];
-  setUprs: React.Dispatch<React.SetStateAction<UPR[]>>;
-  activeId: string | null;
-  setActiveId: (id: string | null) => void;
-  active: UPR | null;
-  updateUPR: (id: string, fn: (u: UPR) => UPR) => void;
-  broadcasts: Broadcast[];
-  setBroadcasts: React.Dispatch<React.SetStateAction<Broadcast[]>>;
+// ─────────── Airline view ───────────
+function AirlineView({ session, uprs, segments, broadcasts, activeId, setActiveId, active, activeSegments, activeChat }: {
+  session: AppSession;
+  uprs: UPRRow[]; segments: SegmentRow[]; broadcasts: BroadcastRow[];
+  activeId: string | null; setActiveId: (id: string | null) => void;
+  active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[];
 }) {
-  const { session, uprs, setUprs, activeId, setActiveId, active, updateUPR, broadcasts, setBroadcasts } = props;
-  const myUprs = useMemo(() => uprs.filter((u) => u.airline === session.airline), [uprs, session.airline]);
-
+  const myUprs = useMemo(() => uprs.filter((u) => u.airline_code === session.scope), [uprs, session.scope]);
   useEffect(() => {
-    if (myUprs.length === 0) {
-      if (activeId !== null) setActiveId(null);
-      return;
-    }
+    if (!myUprs.length) { if (activeId) setActiveId(null); return; }
     if (!myUprs.find((u) => u.id === activeId)) setActiveId(myUprs[0].id);
   }, [myUprs, activeId, setActiveId]);
 
   return (
     <div className="grid grid-cols-12 gap-5">
       <aside className="col-span-3 space-y-4">
-        <NewUPRForm
-          airline={session.airline}
-          onCreate={(u) => { setUprs((p) => [u, ...p]); setActiveId(u.id); }}
-        />
-        <UPRList uprs={myUprs} activeId={activeId} setActiveId={setActiveId} />
+        <NewUPRForm session={session} onCreated={(id) => setActiveId(id)} />
+        <UPRList uprs={myUprs} segments={segments} activeId={activeId} setActiveId={setActiveId} />
       </aside>
-
       <main className="col-span-6 space-y-5">
         {active ? (
           <>
             <UPRHeader upr={active} />
-            <SegmentMatrix upr={active} />
-            <AirlineSegmentList upr={active} updateUPR={updateUPR} />
+            <SegmentMatrix segs={activeSegments} />
+            <AirlineSegmentList upr={active} segs={activeSegments} session={session} />
           </>
-        ) : (
-          <EmptyCard text="Create or select a UPR request to begin." />
-        )}
+        ) : <EmptyCard text="Create or select a UPR request to begin." />}
       </main>
-
       <aside className="col-span-3 space-y-5">
-        {active && (
-          <SegmentChat
-            upr={active}
-            author={`${session.airline} Dispatcher`}
-            role="airline"
-            onSend={(text) =>
-              updateUPR(active.id, (u) => ({
-                ...u,
-                chat: [...u.chat, { id: uid(), author: `${session.airline} Dispatcher`, role: "airline", text, ts: now() }],
-              }))
-            }
-          />
-        )}
-        <BroadcastPanel broadcasts={broadcasts} setBroadcasts={setBroadcasts} author={session.name} role={`Airline · ${session.airline}`} />
+        {active && <SegmentChat upr={active} segs={activeSegments} chat={activeChat} session={session} />}
+        <BroadcastPanel broadcasts={broadcasts} session={session} />
       </aside>
     </div>
   );
 }
 
-function NewUPRForm({ airline, onCreate }: { airline: string; onCreate: (u: UPR) => void }) {
-  const [flightNo, setFlightNo] = useState("");
+function NewUPRForm({ session, onCreated }: { session: AppSession; onCreated: (id: string) => void }) {
   const [callsign, setCallsign] = useState("");
+  const [flightNo, setFlightNo] = useState("");
   const [dep, setDep] = useState("");
   const [arr, setArr] = useState("");
   const [aircraft, setAircraft] = useState("B738");
   const [firs, setFirs] = useState<string[]>(["", ""]);
   const [baseline, setBaseline] = useState(380);
   const [optimized, setOptimized] = useState(345);
-  const [pdf, setPdf] = useState<Attachment | undefined>(undefined);
+  const [pendingPdf, setPendingPdf] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
   const setFir = (i: number, v: string) => setFirs((p) => p.map((x, idx) => (idx === i ? v : x)));
-  const addRow = () => setFirs([...firs, ""]);
-  const rmRow = (i: number) => firs.length > 1 && setFirs(firs.filter((_, idx) => idx !== i));
+  const submit = async () => {
+    setErr(""); setBusy(true);
+    try {
+      const chosen = firs.filter(Boolean);
+      if (!callsign || !flightNo || chosen.length < 1) throw new Error("Callsign, flight # and at least one FIR required");
+      const { data: u, error } = await supabase.from("uprs").insert({
+        callsign, flight_no: flightNo, dep: dep || "----", arr: arr || "----", aircraft,
+        airline_code: session.scope!, created_by: session.userId,
+        baseline_minutes: baseline, optimized_minutes: optimized, burn_kg_per_min: 48,
+      }).select().single();
+      if (error) throw error;
 
-  const submit = () => {
-    const chosen = firs.filter(Boolean);
-    if (!callsign || !flightNo || chosen.length < 1) return;
-    const segs: Segment[] = chosen.map((f, i) => ({
-      fir: f,
-      status: "pending",
-      entry: `WPT${i * 2 + 1}`,
-      exit: `WPT${i * 2 + 2}`,
-      fl: "FL360",
-      revision: 1,
-    }));
-    onCreate({
-      id: uid(),
-      callsign,
-      flightNo,
-      dep: dep || "----",
-      arr: arr || "----",
-      aircraft,
-      createdAt: now(),
-      airline,
-      segments: segs,
-      flightPlanPdf: pdf,
-      chat: [{
-        id: uid(), author: "System", role: "system",
-        text: `UPR submitted across ${chosen.length} FIR(s)${pdf ? ` · flight plan PDF attached (${pdf.name})` : ""}.`,
-        ts: now(),
-      }],
-      baselineMinutes: baseline,
-      optimizedMinutes: optimized,
-      burnKgPerMin: 48,
-    });
-    setFlightNo(""); setCallsign(""); setDep(""); setArr(""); setFirs(["", ""]); setPdf(undefined);
+      if (pendingPdf) {
+        const att = await uploadPdf(pendingPdf, "flightplan", u.id);
+        await supabase.from("uprs").update({ flight_plan_path: att.path, flight_plan_name: att.name, flight_plan_size: att.size }).eq("id", u.id);
+      }
+      const segRows = chosen.map((f, i) => ({
+        upr_id: u.id, fir_code: f, order_idx: i, status: "pending" as const,
+        entry: `WPT${i * 2 + 1}`, exit: `WPT${i * 2 + 2}`, fl: "FL360", revision: 1,
+      }));
+      const { error: segErr } = await supabase.from("segments").insert(segRows);
+      if (segErr) throw segErr;
+
+      await supabase.from("chat_messages").insert({
+        upr_id: u.id, author: session.userId, author_label: "System", author_role: "system",
+        text: `UPR submitted across ${chosen.length} FIR(s)${pendingPdf ? ` · flight plan PDF attached` : ""}.`,
+      });
+      onCreated(u.id);
+      setCallsign(""); setFlightNo(""); setDep(""); setArr(""); setFirs(["", ""]); setPendingPdf(null);
+    } catch (e: any) { setErr(e?.message ?? "Failed"); }
+    setBusy(false);
   };
 
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
-      <div className="text-sm font-semibold mb-3 flex items-center gap-2">
-        <span className="h-1.5 w-1.5 rounded-full bg-sky-400" /> New UPR Request
-      </div>
+      <div className="text-sm font-semibold mb-3 flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-sky-400" /> New UPR Request</div>
       <div className="grid grid-cols-2 gap-2">
         <Input label="Callsign" value={callsign} onChange={setCallsign} placeholder="KQA310" />
         <Input label="Flight #" value={flightNo} onChange={setFlightNo} placeholder="KQ 310" />
@@ -625,44 +347,50 @@ function NewUPRForm({ airline, onCreate }: { airline: string; onCreate: (u: UPR)
         <Input label="Baseline min" value={String(baseline)} onChange={(v) => setBaseline(+v || 0)} />
         <Input label="UPR min" value={String(optimized)} onChange={(v) => setOptimized(+v || 0)} />
       </div>
-
       <div className="mt-3">
         <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1.5">Transit FIRs (ordered)</div>
         <div className="space-y-1.5">
           {firs.map((f, i) => (
             <div key={i} className="flex items-center gap-2">
               <span className="text-[10px] text-slate-500 w-5">{i + 1}.</span>
-              <select
-                value={f}
-                onChange={(e) => setFir(i, e.target.value)}
-                className="flex-1 bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
-              >
+              <select value={f} onChange={(e) => setFir(i, e.target.value)} className="flex-1 bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none">
                 <option value="">Select FIR…</option>
-                {FIRS.map((fr) => (
-                  <option key={fr.code} value={fr.code}>{fr.code} — {fr.name}</option>
-                ))}
+                {FIRS.map((fr) => <option key={fr.code} value={fr.code}>{fr.code} — {fr.name}</option>)}
               </select>
-              <button onClick={() => rmRow(i)} className="text-slate-500 hover:text-red-400 text-sm">×</button>
+              <button onClick={() => firs.length > 1 && setFirs(firs.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 text-sm">×</button>
             </div>
           ))}
         </div>
-        <button
-          onClick={addRow}
-          className="mt-2 text-xs text-sky-400 hover:text-sky-300"
-        >
-          + Add transit FIR ({firs.length})
-        </button>
+        <button onClick={() => setFirs([...firs, ""])} className="mt-2 text-xs text-sky-400 hover:text-sky-300">+ Add transit FIR ({firs.length})</button>
       </div>
-
       <div className="mt-3">
-        <PdfPicker label="Plotted flight plan (PDF) — visible to all FIRs" value={pdf} onChange={setPdf} />
+        <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Plotted flight plan (PDF) — visible to all FIRs</div>
+        {pendingPdf ? (
+          <div className="flex items-center justify-between gap-2 rounded-md bg-slate-950/60 ring-1 ring-slate-800 px-2.5 py-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-red-400">📄</span>
+              <div className="min-w-0">
+                <div className="text-xs font-medium truncate">{pendingPdf.name}</div>
+                <div className="text-[10px] text-slate-500">{fmtBytes(pendingPdf.size)}</div>
+              </div>
+            </div>
+            <button onClick={() => setPendingPdf(null)} className="text-[10px] px-2 py-1 rounded ring-1 ring-slate-700 hover:bg-slate-800">Remove</button>
+          </div>
+        ) : (
+          <label className="block">
+            <span className="cursor-pointer w-full inline-block rounded-md bg-slate-950/60 ring-1 ring-dashed ring-slate-700 hover:ring-sky-500/60 px-2.5 py-3 text-xs text-slate-400 hover:text-sky-300 transition text-center">+ Attach PDF (max 10 MB)</span>
+            <input type="file" accept="application/pdf" className="hidden" onChange={(e) => {
+              const f = e.target.files?.[0]; if (!f) return;
+              if (f.type !== "application/pdf") { setErr("PDF only"); return; }
+              if (f.size > 10 * 1024 * 1024) { setErr("Max 10 MB"); return; }
+              setErr(""); setPendingPdf(f);
+            }} />
+          </label>
+        )}
       </div>
-
-      <button
-        onClick={submit}
-        className="mt-3 w-full bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold rounded-lg py-2 text-sm transition"
-      >
-        Submit UPR Request
+      {err && <div className="mt-2 text-[11px] text-rose-400">{err}</div>}
+      <button onClick={submit} disabled={busy} className="mt-3 w-full bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold rounded-lg py-2 text-sm transition">
+        {busy ? "Submitting…" : "Submit UPR Request"}
       </button>
     </div>
   );
@@ -672,43 +400,31 @@ function Input({ label, value, onChange, placeholder }: { label: string; value: 
   return (
     <label className="block">
       <span className="text-[10px] uppercase tracking-wider text-slate-400">{label}</span>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none"
-      />
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none" />
     </label>
   );
 }
 
-function UPRList({ uprs, activeId, setActiveId }: { uprs: UPR[]; activeId: string | null; setActiveId: (id: string) => void }) {
+function UPRList({ uprs, segments, activeId, setActiveId }: { uprs: UPRRow[]; segments: SegmentRow[]; activeId: string | null; setActiveId: (id: string | null) => void }) {
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-2">
-      <div className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-slate-400">My UPR Requests</div>
+      <div className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-slate-400">UPR Requests</div>
       <div className="space-y-1">
         {uprs.map((u) => {
-          const verdict = computeVerdict(u);
+          const segs = segments.filter((s) => s.upr_id === u.id).sort((a, b) => a.order_idx - b.order_idx);
+          const verdict = computeVerdict(segs);
           return (
-            <button
-              key={u.id}
-              onClick={() => setActiveId(u.id)}
-              className={`w-full text-left px-2.5 py-2 rounded-lg transition ${
-                activeId === u.id ? "bg-slate-800 ring-1 ring-slate-700" : "hover:bg-slate-800/50"
-              }`}
-            >
+            <button key={u.id} onClick={() => setActiveId(u.id)} className={`w-full text-left px-2.5 py-2 rounded-lg transition ${activeId === u.id ? "bg-slate-800 ring-1 ring-slate-700" : "hover:bg-slate-800/50"}`}>
               <div className="flex items-center justify-between">
                 <div className="font-medium text-sm">{u.callsign}</div>
                 <VerdictPill verdict={verdict} />
               </div>
               <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                <span>{u.dep} → {u.arr} · {u.segments.length} FIR</span>
-                {u.flightPlanPdf && <span className="text-red-400" title="Flight plan PDF attached">📄</span>}
+                <span>{u.dep} → {u.arr} · {segs.length} FIR</span>
+                {u.flight_plan_path && <span className="text-red-400" title="Flight plan PDF attached">📄</span>}
               </div>
               <div className="mt-1.5 flex gap-1">
-                {u.segments.map((s, i) => (
-                  <span key={i} className={`h-1.5 flex-1 rounded-full ${STATUS_META[s.status].bg}`} />
-                ))}
+                {segs.map((s) => <span key={s.id} className={`h-1.5 flex-1 rounded-full ${STATUS_META[s.status].bg}`} />)}
               </div>
             </button>
           );
@@ -719,12 +435,12 @@ function UPRList({ uprs, activeId, setActiveId }: { uprs: UPR[]; activeId: strin
   );
 }
 
-function computeVerdict(u: UPR): "PENDING" | "APPROVED" | "REJECTED" {
-  if (u.segments.some((s) => s.status === "rejected")) return "REJECTED";
-  if (u.segments.every((s) => s.status === "approved")) return "APPROVED";
+function computeVerdict(segs: SegmentRow[]): "PENDING" | "APPROVED" | "REJECTED" {
+  if (!segs.length) return "PENDING";
+  if (segs.some((s) => s.status === "rejected")) return "REJECTED";
+  if (segs.every((s) => s.status === "approved")) return "APPROVED";
   return "PENDING";
 }
-
 function VerdictPill({ verdict }: { verdict: string }) {
   const map: Record<string, string> = {
     PENDING: "bg-slate-700 text-slate-200",
@@ -734,8 +450,7 @@ function VerdictPill({ verdict }: { verdict: string }) {
   return <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${map[verdict]}`}>{verdict}</span>;
 }
 
-function UPRHeader({ upr }: { upr: UPR }) {
-  const verdict = computeVerdict(upr);
+function UPRHeader({ upr }: { upr: UPRRow }) {
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
       <div className="flex items-center justify-between">
@@ -743,45 +458,44 @@ function UPRHeader({ upr }: { upr: UPR }) {
           <div className="flex items-center gap-2.5">
             <span className="text-xl font-semibold">{upr.callsign}</span>
             <span className="text-slate-400">·</span>
-            <span className="text-slate-300">{upr.flightNo}</span>
-            <VerdictPill verdict={verdict} />
+            <span className="text-slate-300">{upr.flight_no}</span>
           </div>
           <div className="text-xs text-slate-400 mt-1">
-            {upr.airline} · {upr.dep} → {upr.arr} · {upr.aircraft} · opened {fmtTime(upr.createdAt)}
+            {upr.airline_code} · {upr.dep} → {upr.arr} · {upr.aircraft} · opened {fmtTime(upr.created_at)}
           </div>
         </div>
         <div className="text-right text-xs text-slate-400">
-          <div>Baseline: <span className="text-slate-200">{upr.baselineMinutes} min</span></div>
-          <div>Optimized: <span className="text-emerald-300">{upr.optimizedMinutes} min</span></div>
+          <div>Baseline: <span className="text-slate-200">{upr.baseline_minutes} min</span></div>
+          <div>Optimized: <span className="text-emerald-300">{upr.optimized_minutes} min</span></div>
         </div>
       </div>
-      {upr.flightPlanPdf && (
+      {upr.flight_plan_path && upr.flight_plan_name && (
         <div className="mt-3 pt-3 border-t border-slate-800">
           <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1.5">Plotted flight plan — shared with all FIRs</div>
-          <PdfBadge att={upr.flightPlanPdf} label="Flight Plan" />
+          <PdfBadge path={upr.flight_plan_path} name={upr.flight_plan_name} size={upr.flight_plan_size ?? 0} label="Flight Plan" />
         </div>
       )}
     </div>
   );
 }
 
-function SegmentMatrix({ upr }: { upr: UPR }) {
+function SegmentMatrix({ segs }: { segs: SegmentRow[] }) {
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
       <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-3">Live Status Matrix</div>
       <div className="flex items-stretch gap-2">
-        {upr.segments.map((s, i) => {
+        {segs.map((s, i) => {
           const m = STATUS_META[s.status];
           return (
-            <div key={i} className="flex-1 flex items-center gap-2">
+            <div key={s.id} className="flex-1 flex items-center gap-2">
               <div className={`flex-1 rounded-lg ${m.bg} ring-1 ${m.ring} px-3 py-3`}>
                 <div className="flex items-center justify-between">
-                  <span className={`font-mono font-semibold ${m.color}`}>{s.fir}</span>
+                  <span className={`font-mono font-semibold ${m.color}`}>{s.fir_code}</span>
                   <span className={`text-[10px] ${m.color} opacity-90`}>{m.label}</span>
                 </div>
                 <div className={`text-[10px] ${m.color} opacity-80 mt-0.5`}>{s.entry} → {s.exit} · {s.fl}</div>
               </div>
-              {i < upr.segments.length - 1 && <span className="text-slate-600">›</span>}
+              {i < segs.length - 1 && <span className="text-slate-600">›</span>}
             </div>
           );
         })}
@@ -790,34 +504,31 @@ function SegmentMatrix({ upr }: { upr: UPR }) {
   );
 }
 
-function AirlineSegmentList({ upr, updateUPR }: { upr: UPR; updateUPR: (id: string, fn: (u: UPR) => UPR) => void }) {
+function AirlineSegmentList({ upr, segs, session }: { upr: UPRRow; segs: SegmentRow[]; session: AppSession }) {
   return (
     <div className="space-y-2">
-      {upr.segments.map((s, idx) => (
-        <AirlineSegmentRow key={idx} seg={s} idx={idx} upr={upr} updateUPR={updateUPR} />
-      ))}
+      {segs.map((s) => <AirlineSegmentRow key={s.id} upr={upr} seg={s} session={session} />)}
     </div>
   );
 }
 
-function AirlineSegmentRow({ seg, idx, upr, updateUPR }: { seg: Segment; idx: number; upr: UPR; updateUPR: (id: string, fn: (u: UPR) => UPR) => void }) {
+function AirlineSegmentRow({ upr, seg, session }: { upr: UPRRow; seg: SegmentRow; session: AppSession }) {
   const [editing, setEditing] = useState(false);
   const [entry, setEntry] = useState(seg.entry);
   const [exit, setExit] = useState(seg.exit);
   const [fl, setFl] = useState(seg.fl);
   const m = STATUS_META[seg.status];
-  const firName = FIRS.find((f) => f.code === seg.fir)?.name ?? "";
+  const firName = FIRS.find((f) => f.code === seg.fir_code)?.name ?? "";
 
-  const saveEdit = () => {
-    updateUPR(upr.id, (u) => {
-      const segments = u.segments.map((x, i) =>
-        i === idx ? { ...x, entry, exit, fl, status: "pending" as SegStatus, revision: x.revision + 1, note: undefined, reason: undefined, amendmentPdf: undefined } : x
-      );
-      const chat: ChatMsg[] = [
-        ...u.chat,
-        { id: uid(), author: "System", role: "system", text: `Airline revised ${seg.fir} segment (rev ${seg.revision + 1}). Re-submitted for ANSP review.`, ts: now() },
-      ];
-      return { ...u, segments, chat };
+  const save = async () => {
+    await supabase.from("segments").update({
+      entry, exit, fl, status: "pending", revision: seg.revision + 1,
+      note: null, reason: null, amendment_path: null, amendment_name: null, amendment_size: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", seg.id);
+    await supabase.from("chat_messages").insert({
+      upr_id: upr.id, author: session.userId, author_label: "System", author_role: "system",
+      text: `Airline revised ${seg.fir_code} segment (rev ${seg.revision + 1}). Re-submitted for ANSP review.`,
     });
     setEditing(false);
   };
@@ -827,25 +538,19 @@ function AirlineSegmentRow({ seg, idx, upr, updateUPR }: { seg: Segment; idx: nu
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className={`h-2 w-2 rounded-full ${m.dot}`} />
-          <span className="font-mono font-semibold">{seg.fir}</span>
+          <span className="font-mono font-semibold">{seg.fir_code}</span>
           <span className="text-xs text-slate-400">{firName}</span>
           <span className={`text-[10px] px-1.5 py-0.5 rounded ${m.bg} ${m.color}`}>{m.label}</span>
           <span className="text-[10px] text-slate-500">rev {seg.revision}</span>
         </div>
         {seg.status === "amended" && !editing && (
-          <button
-            onClick={() => setEditing(true)}
-            className="text-xs bg-amber-500 hover:bg-amber-400 text-amber-950 font-semibold px-2.5 py-1 rounded-md"
-          >
-            Edit Route Specification
-          </button>
+          <button onClick={() => setEditing(true)} className="text-xs bg-amber-500 hover:bg-amber-400 text-amber-950 font-semibold px-2.5 py-1 rounded-md">Edit Route Specification</button>
         )}
       </div>
-
-      {seg.status === "amended" && (seg.note || seg.amendmentPdf) && (
+      {seg.status === "amended" && (seg.note || seg.amendment_path) && (
         <div className="mt-2 text-xs bg-amber-500/10 ring-1 ring-amber-500/30 rounded-md p-2 text-amber-200 space-y-1.5">
           {seg.note && <div><span className="font-semibold">ANSP proposal:</span> {seg.note}</div>}
-          {seg.amendmentPdf && <PdfBadge att={seg.amendmentPdf} label="Amendment chart" />}
+          {seg.amendment_path && seg.amendment_name && <PdfBadge path={seg.amendment_path} name={seg.amendment_name} size={seg.amendment_size ?? 0} label="Amendment chart" />}
         </div>
       )}
       {seg.status === "rejected" && seg.reason && (
@@ -853,7 +558,6 @@ function AirlineSegmentRow({ seg, idx, upr, updateUPR }: { seg: Segment; idx: nu
           <span className="font-semibold">Rejection:</span> {seg.reason}
         </div>
       )}
-
       {editing ? (
         <div className="mt-3 grid grid-cols-3 gap-2">
           <Input label="Entry WPT" value={entry} onChange={setEntry} />
@@ -861,9 +565,7 @@ function AirlineSegmentRow({ seg, idx, upr, updateUPR }: { seg: Segment; idx: nu
           <Input label="Flight Level" value={fl} onChange={setFl} />
           <div className="col-span-3 flex justify-end gap-2">
             <button onClick={() => setEditing(false)} className="text-xs px-3 py-1.5 rounded-md ring-1 ring-slate-700 hover:bg-slate-800">Cancel</button>
-            <button onClick={saveEdit} className="text-xs px-3 py-1.5 rounded-md bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold">
-              Submit Revision
-            </button>
+            <button onClick={save} className="text-xs px-3 py-1.5 rounded-md bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold">Submit Revision</button>
           </div>
         </div>
       ) : (
@@ -877,58 +579,46 @@ function AirlineSegmentRow({ seg, idx, upr, updateUPR }: { seg: Segment; idx: nu
   );
 }
 
-// ───────────────────────── ANSP View ─────────────────────────
-function ANSPView(props: {
-  session: Extract<Session, { role: "ansp" }>;
-  uprs: UPR[];
-  activeId: string | null;
-  setActiveId: (id: string) => void;
-  active: UPR | null;
-  updateUPR: (id: string, fn: (u: UPR) => UPR) => void;
-  broadcasts: Broadcast[];
-  setBroadcasts: React.Dispatch<React.SetStateAction<Broadcast[]>>;
+// ─────────── ANSP view ───────────
+function ANSPView({ session, uprs, segments, broadcasts, activeId, setActiveId, active, activeSegments, activeChat }: {
+  session: AppSession;
+  uprs: UPRRow[]; segments: SegmentRow[]; broadcasts: BroadcastRow[];
+  activeId: string | null; setActiveId: (id: string | null) => void;
+  active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[];
 }) {
-  const { session, uprs, activeId, setActiveId, active, updateUPR, broadcasts, setBroadcasts } = props;
-  const anspFir = session.fir;
-  const queue = useMemo(() => uprs.filter((u) => u.segments.some((s) => s.fir === anspFir)), [uprs, anspFir]);
-  const firName = FIRS.find((f) => f.code === anspFir)?.name;
-
+  const fir = session.scope!;
+  const firName = FIRS.find((f) => f.code === fir)?.name;
+  const queue = useMemo(() => uprs.filter((u) => segments.some((s) => s.upr_id === u.id && s.fir_code === fir)), [uprs, segments, fir]);
   useEffect(() => {
     if (queue.length && !queue.find((u) => u.id === activeId)) setActiveId(queue[0].id);
   }, [queue, activeId, setActiveId]);
 
-  const mySeg = active?.segments.find((s) => s.fir === anspFir);
+  const mySeg = activeSegments.find((s) => s.fir_code === fir);
 
   return (
     <div className="grid grid-cols-12 gap-5">
       <aside className="col-span-3 space-y-4">
         <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
           <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1">Acting as</div>
-          <div className="text-lg font-semibold">{anspFir}</div>
+          <div className="text-lg font-semibold">{fir}</div>
           <div className="text-xs text-slate-400">{firName} FIR Controller</div>
-          <div className="text-[10px] text-slate-500 mt-2">Scope locked at sign-in — sign out to switch FIR.</div>
+          <div className="text-[10px] text-slate-500 mt-2">Scope locked at sign-in.</div>
         </div>
         <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-2">
           <div className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-slate-400">Targeted Queue ({queue.length})</div>
           <div className="space-y-1">
             {queue.map((u) => {
-              const seg = u.segments.find((s) => s.fir === anspFir)!;
+              const seg = segments.find((s) => s.upr_id === u.id && s.fir_code === fir)!;
               const m = STATUS_META[seg.status];
               return (
-                <button
-                  key={u.id}
-                  onClick={() => setActiveId(u.id)}
-                  className={`w-full text-left px-2.5 py-2 rounded-lg ${
-                    activeId === u.id ? "bg-slate-800 ring-1 ring-slate-700" : "hover:bg-slate-800/50"
-                  }`}
-                >
+                <button key={u.id} onClick={() => setActiveId(u.id)} className={`w-full text-left px-2.5 py-2 rounded-lg ${activeId === u.id ? "bg-slate-800 ring-1 ring-slate-700" : "hover:bg-slate-800/50"}`}>
                   <div className="flex justify-between items-center">
                     <span className="font-medium text-sm">{u.callsign}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${m.bg} ${m.color}`}>{m.label}</span>
                   </div>
                   <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
                     <span>{seg.entry} → {seg.exit} · {seg.fl}</span>
-                    {u.flightPlanPdf && <span className="text-red-400" title="Flight plan PDF">📄</span>}
+                    {u.flight_plan_path && <span className="text-red-400" title="Flight plan PDF">📄</span>}
                   </div>
                 </button>
               );
@@ -937,53 +627,58 @@ function ANSPView(props: {
           </div>
         </div>
       </aside>
-
       <main className="col-span-6 space-y-5">
         {active && mySeg ? (
           <>
             <UPRHeader upr={active} />
-            <SegmentMatrix upr={active} />
-            <ANSPDecisionPanel upr={active} seg={mySeg} fir={anspFir} updateUPR={updateUPR} />
+            <SegmentMatrix segs={activeSegments} />
+            <ANSPDecisionPanel upr={active} seg={mySeg} fir={fir} session={session} />
           </>
-        ) : (
-          <EmptyCard text={`No active request for ${anspFir}.`} />
-        )}
+        ) : <EmptyCard text={`No active request for ${fir}.`} />}
       </main>
-
       <aside className="col-span-3 space-y-5">
-        {active && (
-          <SegmentChat
-            upr={active}
-            author={`${anspFir} ${firName ?? ""}`}
-            role="ansp"
-            onSend={(text) =>
-              updateUPR(active.id, (u) => ({
-                ...u,
-                chat: [...u.chat, { id: uid(), author: `${anspFir} ${firName ?? ""}`, role: "ansp", text, ts: now() }],
-              }))
-            }
-          />
-        )}
-        <BroadcastPanel broadcasts={broadcasts} setBroadcasts={setBroadcasts} author={`${anspFir} ${firName ?? ""}`} role="ANSP" />
+        {active && <SegmentChat upr={active} segs={activeSegments} chat={activeChat} session={session} />}
+        <BroadcastPanel broadcasts={broadcasts} session={session} />
       </aside>
     </div>
   );
 }
 
-function ANSPDecisionPanel({ upr, seg, fir, updateUPR }: { upr: UPR; seg: Segment; fir: string; updateUPR: (id: string, fn: (u: UPR) => UPR) => void }) {
+function ANSPDecisionPanel({ upr, seg, fir, session }: { upr: UPRRow; seg: SegmentRow; fir: string; session: AppSession }) {
   const [mode, setMode] = useState<null | "amend" | "reject">(null);
   const [note, setNote] = useState("");
-  const [amendPdf, setAmendPdf] = useState<Attachment | undefined>(undefined);
   const [reason, setReason] = useState(REJECT_REASONS[0]);
+  const [pendingPdf, setPendingPdf] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
   const locked = seg.status === "amended" || seg.status === "approved" || seg.status === "rejected";
 
-  const setStatus = (status: SegStatus, extra: Partial<Segment> = {}, log?: string) => {
-    updateUPR(upr.id, (u) => ({
-      ...u,
-      segments: u.segments.map((s) => (s.fir === fir ? { ...s, status, ...extra } : s)),
-      chat: log ? [...u.chat, { id: uid(), author: "System", role: "system", text: log, ts: now() }] : u.chat,
-    }));
-    setMode(null); setNote(""); setAmendPdf(undefined);
+  const log = (text: string) =>
+    supabase.from("chat_messages").insert({ upr_id: upr.id, author: session.userId, author_label: "System", author_role: "system", text });
+
+  const approve = async () => {
+    setBusy(true);
+    await supabase.from("segments").update({ status: "approved", note: null, reason: null, amendment_path: null, amendment_name: null, amendment_size: null, updated_at: new Date().toISOString() }).eq("id", seg.id);
+    await log(`${fir} approved segment for ${upr.callsign}.`);
+    setBusy(false);
+  };
+  const amend = async () => {
+    if (!note.trim()) return;
+    setBusy(true);
+    let att: { path: string; name: string; size: number } | null = null;
+    if (pendingPdf) att = await uploadPdf(pendingPdf, "amendment", upr.id);
+    await supabase.from("segments").update({
+      status: "amended", note, reason: null,
+      amendment_path: att?.path ?? null, amendment_name: att?.name ?? null, amendment_size: att?.size ?? null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", seg.id);
+    await log(`${fir} proposed amendment${att ? ` (PDF: ${att.name})` : ""}: "${note}"`);
+    setMode(null); setNote(""); setPendingPdf(null); setBusy(false);
+  };
+  const reject = async () => {
+    setBusy(true);
+    await supabase.from("segments").update({ status: "rejected", reason, note: null, updated_at: new Date().toISOString() }).eq("id", seg.id);
+    await log(`${fir} rejected segment — ${reason}`);
+    setMode(null); setBusy(false);
   };
 
   return (
@@ -991,245 +686,146 @@ function ANSPDecisionPanel({ upr, seg, fir, updateUPR }: { upr: UPR; seg: Segmen
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="text-sm font-semibold">Tri-Action Decision Panel</div>
-          <div className="text-[11px] text-slate-400">Segment: {seg.fir} · {seg.entry} → {seg.exit} · {seg.fl} · rev {seg.revision}</div>
+          <div className="text-[11px] text-slate-400">Segment: {seg.fir_code} · {seg.entry} → {seg.exit} · {seg.fl} · rev {seg.revision}</div>
         </div>
-        <span className={`text-[10px] px-2 py-0.5 rounded ${STATUS_META[seg.status].bg} ${STATUS_META[seg.status].color}`}>
-          {STATUS_META[seg.status].label}
-        </span>
+        <span className={`text-[10px] px-2 py-0.5 rounded ${STATUS_META[seg.status].bg} ${STATUS_META[seg.status].color}`}>{STATUS_META[seg.status].label}</span>
       </div>
-
       {locked && seg.status === "amended" && (
         <div className="text-xs bg-amber-500/10 ring-1 ring-amber-500/30 text-amber-200 rounded-md p-2 mb-3 space-y-1.5">
           <div>Locked — awaiting airline revision. Your proposal: <em>{seg.note}</em></div>
-          {seg.amendmentPdf && <PdfBadge att={seg.amendmentPdf} label="Amendment chart" />}
+          {seg.amendment_path && seg.amendment_name && <PdfBadge path={seg.amendment_path} name={seg.amendment_name} size={seg.amendment_size ?? 0} label="Amendment chart" />}
         </div>
       )}
-
       <div className="grid grid-cols-3 gap-2">
-        <button
-          disabled={locked}
-          onClick={() => setStatus("approved", { note: undefined, reason: undefined, amendmentPdf: undefined }, `${fir} approved segment for ${upr.callsign}.`)}
-          className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-950 font-semibold py-2 rounded-lg text-sm"
-        >
-          ✓ Approve Route Segment
-        </button>
-        <button
-          disabled={locked}
-          onClick={() => setMode(mode === "amend" ? null : "amend")}
-          className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-amber-950 font-semibold py-2 rounded-lg text-sm"
-        >
-          ⚠ Propose Amendment
-        </button>
-        <button
-          disabled={locked}
-          onClick={() => setMode(mode === "reject" ? null : "reject")}
-          className="bg-red-500 hover:bg-red-400 disabled:opacity-40 text-red-950 font-semibold py-2 rounded-lg text-sm"
-        >
-          ✕ Reject Segment
-        </button>
+        <button disabled={locked || busy} onClick={approve} className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-emerald-950 font-semibold py-2 rounded-lg text-sm">✓ Approve Route Segment</button>
+        <button disabled={locked || busy} onClick={() => setMode(mode === "amend" ? null : "amend")} className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-amber-950 font-semibold py-2 rounded-lg text-sm">⚠ Propose Amendment</button>
+        <button disabled={locked || busy} onClick={() => setMode(mode === "reject" ? null : "reject")} className="bg-red-500 hover:bg-red-400 disabled:opacity-40 text-red-950 font-semibold py-2 rounded-lg text-sm">✕ Reject Segment</button>
       </div>
-
       {mode === "amend" && (
         <div className="mt-3 space-y-2">
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Describe the required amendment (waypoints, flight level, entry/exit point changes)…"
-            className="w-full h-24 bg-slate-950/60 ring-1 ring-slate-800 rounded-md p-2 text-sm focus:ring-amber-500 outline-none"
-          />
-          <PdfPicker label="Recommended amendment chart (PDF)" value={amendPdf} onChange={setAmendPdf} />
-          <button
-            disabled={!note.trim()}
-            onClick={() => setStatus(
-              "amended",
-              { note, amendmentPdf: amendPdf },
-              `${fir} proposed amendment${amendPdf ? ` (PDF attached: ${amendPdf.name})` : ""}: "${note}"`,
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Describe the required amendment…" className="w-full h-24 bg-slate-950/60 ring-1 ring-slate-800 rounded-md p-2 text-sm focus:ring-amber-500 outline-none" />
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Recommended amendment chart (PDF)</div>
+            {pendingPdf ? (
+              <div className="flex items-center justify-between gap-2 rounded-md bg-slate-950/60 ring-1 ring-slate-800 px-2.5 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-red-400">📄</span>
+                  <div className="min-w-0"><div className="text-xs font-medium truncate">{pendingPdf.name}</div><div className="text-[10px] text-slate-500">{fmtBytes(pendingPdf.size)}</div></div>
+                </div>
+                <button onClick={() => setPendingPdf(null)} className="text-[10px] px-2 py-1 rounded ring-1 ring-slate-700 hover:bg-slate-800">Remove</button>
+              </div>
+            ) : (
+              <label className="block">
+                <span className="cursor-pointer w-full inline-block rounded-md bg-slate-950/60 ring-1 ring-dashed ring-slate-700 hover:ring-amber-500/60 px-2.5 py-3 text-xs text-slate-400 hover:text-amber-300 transition text-center">+ Attach PDF (max 10 MB)</span>
+                <input type="file" accept="application/pdf" className="hidden" onChange={(e) => {
+                  const f = e.target.files?.[0]; if (!f) return;
+                  if (f.size > 10 * 1024 * 1024) return;
+                  setPendingPdf(f);
+                }} />
+              </label>
             )}
-            className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-amber-950 font-semibold py-1.5 rounded-md text-sm"
-          >
-            Submit Amendment Request
-          </button>
+          </div>
+          <button disabled={!note.trim() || busy} onClick={amend} className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-amber-950 font-semibold py-1.5 rounded-md text-sm">Submit Amendment Request</button>
         </div>
       )}
-
       {mode === "reject" && (
         <div className="mt-3 space-y-2">
-          <select
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            className="w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-2 text-sm focus:ring-red-500 outline-none"
-          >
+          <select value={reason} onChange={(e) => setReason(e.target.value)} className="w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-2 text-sm focus:ring-red-500 outline-none">
             {REJECT_REASONS.map((r) => <option key={r}>{r}</option>)}
           </select>
-          <button
-            onClick={() => setStatus("rejected", { reason }, `${fir} rejected segment — ${reason}`)}
-            className="w-full bg-red-500 hover:bg-red-400 text-red-950 font-semibold py-1.5 rounded-md text-sm"
-          >
-            Confirm Rejection
-          </button>
+          <button onClick={reject} disabled={busy} className="w-full bg-red-500 hover:bg-red-400 disabled:opacity-40 text-red-950 font-semibold py-1.5 rounded-md text-sm">Confirm Rejection</button>
         </div>
       )}
     </div>
   );
 }
 
-// ───────────────────────── Executive View ─────────────────────────
-function AdminView({ uprs }: { uprs: UPR[] }) {
-  const approved = uprs.filter((u) => computeVerdict(u) === "APPROVED");
-  const minSaved = approved.reduce((s, u) => s + Math.max(0, u.baselineMinutes - u.optimizedMinutes), 0);
-  const fuelSaved = approved.reduce((s, u) => s + Math.max(0, u.baselineMinutes - u.optimizedMinutes) * u.burnKgPerMin, 0);
-  const co2 = fuelSaved * 3.16;
-
-  const stats = [
-    { label: "Approved UPR Trials", value: approved.length, sub: `of ${uprs.length} total` },
-    { label: "Flight Minutes Saved", value: minSaved.toLocaleString(), sub: "minutes" },
-    { label: "Jet Fuel Conserved", value: fuelSaved.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: "kg" },
-    { label: "CO₂ Emissions Avoided", value: co2.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: "kg CO₂" },
-  ];
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Executive Analytics Hub</h1>
-        <p className="text-sm text-slate-400">Read-only operational impact across all approved UPR trial paths.</p>
-      </div>
-      <div className="grid grid-cols-4 gap-4">
-        {stats.map((s) => (
-          <div key={s.label} className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
-            <div className="text-[11px] uppercase tracking-wider text-slate-400">{s.label}</div>
-            <div className="text-3xl font-semibold mt-2 bg-gradient-to-br from-emerald-300 to-sky-400 bg-clip-text text-transparent">
-              {s.value}
-            </div>
-            <div className="text-xs text-slate-500 mt-1">{s.sub}</div>
-          </div>
-        ))}
-      </div>
-      <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
-        <div className="text-sm font-semibold mb-3">Recent UPR Activity</div>
-        <table className="w-full text-sm">
-          <thead className="text-[11px] uppercase tracking-wider text-slate-400">
-            <tr><th className="text-left py-2">Callsign</th><th className="text-left">Airline</th><th className="text-left">Route</th><th className="text-left">FIRs</th><th className="text-right">Δ min</th><th className="text-right">CO₂ avoided</th><th className="text-right">Verdict</th></tr>
-          </thead>
-          <tbody>
-            {uprs.map((u) => {
-              const dm = Math.max(0, u.baselineMinutes - u.optimizedMinutes);
-              const c = dm * u.burnKgPerMin * 3.16;
-              return (
-                <tr key={u.id} className="border-t border-slate-800">
-                  <td className="py-2 font-mono">{u.callsign}</td>
-                  <td className="text-slate-300">{u.airline}</td>
-                  <td>{u.dep} → {u.arr}</td>
-                  <td className="text-slate-400">{u.segments.map((s) => s.fir).join(" → ")}</td>
-                  <td className="text-right text-emerald-300">{dm}</td>
-                  <td className="text-right">{c.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg</td>
-                  <td className="text-right"><VerdictPill verdict={computeVerdict(u)} /></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ───────────────────────── Chat / Broadcast ─────────────────────────
-function SegmentChat({ upr, author, role, onSend }: { upr: UPR; author: string; role: "airline" | "ansp"; onSend: (t: string) => void }) {
+// ─────────── Chat / Broadcast ───────────
+function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentRow[]; chat: ChatRow[]; session: AppSession }) {
   const [text, setText] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [upr.chat.length]);
-
-  const participants = [`${upr.airline} Dispatcher`, ...upr.segments.map((s) => `${s.fir} ${FIRS.find((f) => f.code === s.fir)?.name ?? ""}`)];
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat.length]);
+  const myLabel =
+    session.role === "airline" ? `${session.scope} Dispatcher` :
+    session.role === "ansp" ? `${session.scope} ${FIRS.find((f) => f.code === session.scope)?.name ?? ""}` :
+    "Admin";
+  const send = async () => {
+    if (!text.trim()) return;
+    await supabase.from("chat_messages").insert({
+      upr_id: upr.id, author: session.userId, author_label: myLabel,
+      author_role: session.role, text: text.trim(),
+    });
+    setText("");
+  };
+  const participants = [`${upr.airline_code} Dispatcher`, ...segs.map((s) => `${s.fir_code} ${FIRS.find((f) => f.code === s.fir_code)?.name ?? ""}`)];
 
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 flex flex-col h-[420px]">
       <div className="px-3.5 py-2.5 border-b border-slate-800">
-        <div className="text-sm font-semibold flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-sky-400" /> Contextual Segment Chat
-        </div>
+        <div className="text-sm font-semibold flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-sky-400" /> Contextual Segment Chat</div>
         <div className="text-[10px] text-slate-500 truncate">Participants: {participants.join(", ")}</div>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {upr.chat.map((m) => <ChatBubble key={m.id} msg={m} />)}
+        {chat.map((m) => <ChatBubble key={m.id} m={m} mineId={session.userId} />)}
         <div ref={endRef} />
       </div>
-      <form
-        onSubmit={(e) => { e.preventDefault(); if (text.trim()) { onSend(text.trim()); setText(""); } }}
-        className="border-t border-slate-800 p-2 flex gap-2"
-      >
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={`Message as ${author}…`}
-          className="flex-1 bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2.5 py-1.5 text-sm focus:ring-sky-500 outline-none"
-        />
+      <form onSubmit={(e) => { e.preventDefault(); send(); }} className="border-t border-slate-800 p-2 flex gap-2">
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={`Message as ${myLabel}…`} className="flex-1 bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2.5 py-1.5 text-sm focus:ring-sky-500 outline-none" />
         <button className="text-xs px-3 rounded-md bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold">Send</button>
       </form>
     </div>
   );
 }
-
-function ChatBubble({ msg }: { msg: ChatMsg }) {
-  if (msg.role === "system") {
-    return (
-      <div className="text-center text-[10px] uppercase tracking-wider text-slate-500 py-1">
-        {msg.text} <span className="text-slate-600">· {fmtTime(msg.ts)}</span>
-      </div>
-    );
-  }
-  const isAirline = msg.role === "airline";
+function ChatBubble({ m, mineId }: { m: ChatRow; mineId: string }) {
+  if (m.author_role === "system") return (
+    <div className="text-center text-[10px] uppercase tracking-wider text-slate-500 py-1">
+      {m.text} <span className="text-slate-600">· {fmtTime(m.created_at)}</span>
+    </div>
+  );
+  const mine = m.author === mineId;
   return (
-    <div className={`flex ${isAirline ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm ${
-        isAirline ? "bg-sky-500/90 text-slate-950" : "bg-slate-800 text-slate-100 ring-1 ring-slate-700"
-      }`}>
-        <div className={`text-[10px] font-semibold opacity-80 ${isAirline ? "text-slate-900" : "text-emerald-300"}`}>
-          {msg.author}
-        </div>
-        <div className="leading-snug">{msg.text}</div>
-        <div className={`text-[9px] mt-0.5 opacity-60 ${isAirline ? "text-slate-900" : "text-slate-400"}`}>{fmtTime(msg.ts)}</div>
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+      <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm ${mine ? "bg-sky-500/90 text-slate-950" : "bg-slate-800 text-slate-100 ring-1 ring-slate-700"}`}>
+        <div className={`text-[10px] font-semibold opacity-80 ${mine ? "text-slate-900" : "text-emerald-300"}`}>{m.author_label}</div>
+        <div className="leading-snug">{m.text}</div>
+        <div className={`text-[9px] mt-0.5 opacity-60 ${mine ? "text-slate-900" : "text-slate-400"}`}>{fmtTime(m.created_at)}</div>
       </div>
     </div>
   );
 }
 
-function BroadcastPanel({
-  broadcasts, setBroadcasts, author, role,
-}: {
-  broadcasts: Broadcast[];
-  setBroadcasts: React.Dispatch<React.SetStateAction<Broadcast[]>>;
-  author: string;
-  role: string;
-}) {
+function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; session: AppSession }) {
   const [text, setText] = useState("");
   const [sev, setSev] = useState<"info" | "warn" | "critical">("info");
-
-  const send = () => {
+  const label =
+    session.role === "airline" ? `Airline · ${session.scope}` :
+    session.role === "ansp" ? `ANSP · ${session.scope}` :
+    "Admin";
+  const send = async () => {
     if (!text.trim()) return;
-    setBroadcasts((p) => [{ id: uid(), author, role, text: text.trim(), ts: now(), severity: sev }, ...p]);
+    await supabase.from("broadcasts").insert({
+      author: session.userId, author_label: session.fullName,
+      author_role: label, text: text.trim(), severity: sev,
+    });
     setText("");
   };
-
   const sevMap = {
     info: "bg-sky-500/15 ring-sky-500/40 text-sky-200",
     warn: "bg-amber-500/15 ring-amber-500/40 text-amber-200",
     critical: "bg-red-500/15 ring-red-500/40 text-red-200",
   };
-
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 flex flex-col h-[340px]">
       <div className="px-3.5 py-2.5 border-b border-slate-800 flex items-center justify-between">
-        <div className="text-sm font-semibold flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" /> Stakeholder Broadcast
-        </div>
+        <div className="text-sm font-semibold flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" /> Stakeholder Broadcast</div>
         <span className="text-[10px] text-slate-500">Global · all entities</span>
       </div>
       <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
         {broadcasts.map((b) => (
           <div key={b.id} className={`rounded-lg p-2 ring-1 ${sevMap[b.severity]}`}>
             <div className="flex justify-between items-center text-[10px] opacity-80">
-              <span className="font-semibold uppercase tracking-wider">{b.role} · {b.author}</span>
-              <span>{fmtTime(b.ts)}</span>
+              <span className="font-semibold uppercase tracking-wider">{b.author_role} · {b.author_label}</span>
+              <span>{fmtTime(b.created_at)}</span>
             </div>
             <div className="text-sm mt-0.5">{b.text}</div>
           </div>
@@ -1239,25 +835,11 @@ function BroadcastPanel({
       <div className="border-t border-slate-800 p-2 space-y-1.5">
         <div className="flex gap-1.5">
           {(["info", "warn", "critical"] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => setSev(s)}
-              className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wider ${
-                sev === s ? sevMap[s] + " ring-1" : "text-slate-400 ring-1 ring-slate-800"
-              }`}
-            >
-              {s}
-            </button>
+            <button key={s} onClick={() => setSev(s)} className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wider ${sev === s ? sevMap[s] + " ring-1" : "text-slate-400 ring-1 ring-slate-800"}`}>{s}</button>
           ))}
         </div>
         <div className="flex gap-2">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send()}
-            placeholder="Issue broadcast to all entities…"
-            className="flex-1 bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2.5 py-1.5 text-sm focus:ring-red-500 outline-none"
-          />
+          <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Issue broadcast to all entities…" className="flex-1 bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2.5 py-1.5 text-sm focus:ring-red-500 outline-none" />
           <button onClick={send} className="text-xs px-3 rounded-md bg-red-500 hover:bg-red-400 text-red-950 font-semibold">Broadcast</button>
         </div>
       </div>
@@ -1265,8 +847,117 @@ function BroadcastPanel({
   );
 }
 
-function EmptyCard({ text }: { text: string }) {
+// ─────────── Admin view: approvals + analytics ───────────
+function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[] }) {
+  type PendingRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
+  const [pending, setPending] = useState<PendingRow[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("profiles").select("id,email,full_name,requested_role,requested_scope,created_at,approved").eq("approved", false).order("created_at");
+    setPending((data ?? []) as any);
+  }, []);
+  useEffect(() => { load(); }, [load, session.userId]);
+
+  const approve = async (p: PendingRow) => {
+    setBusy(p.id);
+    const role = (p.requested_role ?? "airline") as "airline" | "ansp" | "admin";
+    const scope = p.requested_scope;
+    const { error } = await supabase.rpc("approve_user", { _user_id: p.id, _role: role, _scope: scope });
+    if (error) alert(error.message);
+    await load();
+    setBusy(null);
+  };
+
+  // Analytics
+  const verdictOf = (uprId: string) => computeVerdict(segments.filter((s) => s.upr_id === uprId));
+  const approved = uprs.filter((u) => verdictOf(u.id) === "APPROVED");
+  const minSaved = approved.reduce((s, u) => s + Math.max(0, u.baseline_minutes - u.optimized_minutes), 0);
+  const fuelSaved = approved.reduce((s, u) => s + Math.max(0, u.baseline_minutes - u.optimized_minutes) * Number(u.burn_kg_per_min), 0);
+  const co2 = fuelSaved * 3.16;
+  const stats = [
+    { label: "Approved UPR Trials", value: approved.length.toString(), sub: `of ${uprs.length} total` },
+    { label: "Flight Minutes Saved", value: minSaved.toLocaleString(), sub: "minutes" },
+    { label: "Jet Fuel Conserved", value: fuelSaved.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: "kg" },
+    { label: "CO₂ Emissions Avoided", value: co2.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: "kg CO₂" },
+  ];
+
   return (
-    <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-10 text-center text-slate-400 text-sm">{text}</div>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Administrator Console</h1>
+        <p className="text-sm text-slate-400">Approve new operators and review operational impact.</p>
+      </div>
+      <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-semibold">Pending account approvals ({pending.length})</div>
+          <button onClick={load} className="text-[11px] text-sky-400 hover:text-sky-300">Refresh</button>
+        </div>
+        {pending.length === 0 ? (
+          <div className="text-xs text-slate-500 py-4 text-center">No pending requests.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-[11px] uppercase tracking-wider text-slate-400">
+              <tr><th className="text-left py-2">Name</th><th className="text-left">Email</th><th className="text-left">Requested role</th><th className="text-left">Scope</th><th className="text-right">Action</th></tr>
+            </thead>
+            <tbody>
+              {pending.map((p) => (
+                <tr key={p.id} className="border-t border-slate-800">
+                  <td className="py-2">{p.full_name}</td>
+                  <td className="text-slate-400">{p.email}</td>
+                  <td><span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800">{p.requested_role ?? "—"}</span></td>
+                  <td className="font-mono text-slate-300">{p.requested_scope ?? "—"}</td>
+                  <td className="text-right">
+                    <button disabled={busy === p.id} onClick={() => approve(p)} className="text-xs px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-emerald-950 font-semibold">
+                      {busy === p.id ? "…" : "Approve"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="grid grid-cols-4 gap-4">
+        {stats.map((s) => (
+          <div key={s.label} className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
+            <div className="text-[11px] uppercase tracking-wider text-slate-400">{s.label}</div>
+            <div className="text-3xl font-semibold mt-2 bg-gradient-to-br from-emerald-300 to-sky-400 bg-clip-text text-transparent">{s.value}</div>
+            <div className="text-xs text-slate-500 mt-1">{s.sub}</div>
+          </div>
+        ))}
+      </div>
+      <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
+        <div className="text-sm font-semibold mb-3">Recent UPR activity</div>
+        <table className="w-full text-sm">
+          <thead className="text-[11px] uppercase tracking-wider text-slate-400">
+            <tr><th className="text-left py-2">Callsign</th><th className="text-left">Airline</th><th className="text-left">Route</th><th className="text-left">FIRs</th><th className="text-right">Δ min</th><th className="text-right">CO₂ avoided</th><th className="text-right">Verdict</th></tr>
+          </thead>
+          <tbody>
+            {uprs.map((u) => {
+              const segs = segments.filter((s) => s.upr_id === u.id).sort((a, b) => a.order_idx - b.order_idx);
+              const dm = Math.max(0, u.baseline_minutes - u.optimized_minutes);
+              const c = dm * Number(u.burn_kg_per_min) * 3.16;
+              return (
+                <tr key={u.id} className="border-t border-slate-800">
+                  <td className="py-2 font-mono">{u.callsign}</td>
+                  <td className="text-slate-300">{u.airline_code}</td>
+                  <td>{u.dep} → {u.arr}</td>
+                  <td className="text-slate-400">{segs.map((s) => s.fir_code).join(" → ")}</td>
+                  <td className="text-right text-emerald-300">{dm}</td>
+                  <td className="text-right">{c.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg</td>
+                  <td className="text-right"><VerdictPill verdict={computeVerdict(segs)} /></td>
+                </tr>
+              );
+            })}
+            {uprs.length === 0 && <tr><td colSpan={7} className="text-center text-xs text-slate-500 py-6">No UPRs yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
+}
+
+function EmptyCard({ text }: { text: string }) {
+  return <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-10 text-center text-slate-400 text-sm">{text}</div>;
 }
