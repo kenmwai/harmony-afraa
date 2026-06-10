@@ -26,8 +26,8 @@ function AuthPage() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState<Exclude<Role, "admin">>("airline");
-  const [airlines, setAirlines] = useState<{ code: string; name: string }[]>([]);
-  const [airline, setAirline] = useState("");
+  const [airlineCode, setAirlineCode] = useState("");
+  const [airlineName, setAirlineName] = useState("");
   const [fir, setFir] = useState(FIRS[0].code);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -35,12 +35,6 @@ function AuthPage() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) nav({ to: "/" });
-    });
-    supabase.from("airlines").select("code,name").order("name").then(({ data }) => {
-      if (data) {
-        setAirlines(data);
-        if (data[0]) setAirline(data[0].code);
-      }
     });
   }, [nav]);
 
