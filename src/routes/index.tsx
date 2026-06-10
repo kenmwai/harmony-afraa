@@ -131,14 +131,10 @@ function UPRApp() {
 
   const active = uprs.find((u) => u.id === activeId) ?? null;
 
-  useEffect(() => {
-    if (!activeId && uprs.length) setActiveId(uprs[0].id);
-  }, [uprs, activeId]);
-
   const updateUPR = (id: string, fn: (u: UPR) => UPR) =>
     setUprs((prev) => prev.map((u) => (u.id === id ? fn(u) : u)));
 
-  if (!session) return <SignIn onSignIn={setSession} />;
+  if (!session) return <SignIn onSignIn={(s) => { setActiveId(null); setSession(s); }} />;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
