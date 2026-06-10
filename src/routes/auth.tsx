@@ -48,8 +48,17 @@ function AuthPage() {
       if (mode === "signup") {
         if (!fullName.trim()) throw new Error("Full name is required");
         if (!strongOk) throw new Error("Password does not meet policy");
-        const scope = role === "airline" ? airline : fir;
-        if (!scope) throw new Error("Pick your organization");
+        let scope = "";
+        if (role === "airline") {
+          const code = airlineCode.trim().toUpperCase();
+          const name = airlineName.trim();
+          if (!/^[A-Z0-9]{2,8}$/.test(code)) throw new Error("Airline code must be 2–8 letters/digits (e.g. KQA)");
+          if (name.length < 2 || name.length > 80) throw new Error("Enter your airline name");
+          scope = code;
+        } else {
+          if (!fir) throw new Error("Pick your FIR");
+          scope = fir;
+        }
         const { error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -63,6 +72,14 @@ function AuthPage() {
           },
         });
         if (error) throw error;
+        if (role === "airline") {
+          // Register the airline (idempotent) so admin approval has a valid scope target.
+          const { error: rErr } = await supabase.rpc("register_airline", {
+            _code: airlineCode.trim().toUpperCase(),
+            _name: airlineName.trim(),
+          });
+          if (rErr) console.warn("register_airline:", rErr.message);
+        }
         nav({ to: "/" });
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
