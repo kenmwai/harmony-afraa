@@ -175,25 +175,36 @@ function UPRApp() {
   );
 }
 
+const ADMIN_PASSCODE = "UPR-ADMIN-2026";
+
 function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
-  const [role, setRole] = useState<Role>("airline");
+  const [role, setRole] = useState<Exclude<Role, "admin">>("airline");
   const [name, setName] = useState("");
   const [airline, setAirline] = useState("Kenya Airways");
   const [fir, setFir] = useState("HTDC");
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminCode, setAdminCode] = useState("");
+  const [adminErr, setAdminErr] = useState("");
 
   const canSubmit = name.trim().length > 0;
 
   const submit = () => {
     if (!canSubmit) return;
     if (role === "airline") onSignIn({ role, name: name.trim(), airline });
-    else if (role === "ansp") onSignIn({ role, name: name.trim(), fir });
-    else onSignIn({ role, name: name.trim() });
+    else onSignIn({ role, name: name.trim(), fir });
   };
 
-  const roles: { id: Role; label: string; sub: string }[] = [
+  const submitAdmin = () => {
+    if (adminCode.trim() === ADMIN_PASSCODE) {
+      onSignIn({ role: "admin", name: "Administrator" });
+    } else {
+      setAdminErr("Invalid admin passcode");
+    }
+  };
+
+  const roles: { id: Exclude<Role, "admin">; label: string; sub: string }[] = [
     { id: "airline", label: "Airline Dispatcher", sub: "Submit UPRs · attach flight plan PDF · respond to amendments" },
     { id: "ansp", label: "ANSP / Regulator", sub: "Review FIR segment · approve / amend with PDF / reject" },
-    { id: "admin", label: "Admin", sub: "Operational analytics & oversight dashboard" },
   ];
 
   return (
