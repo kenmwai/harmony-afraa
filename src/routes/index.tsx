@@ -918,7 +918,8 @@ function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPR
           </table>
         )}
       </div>
-      <div className="grid grid-cols-4 gap-4">
+      <FirManager />
+
         {stats.map((s) => (
           <div key={s.label} className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
             <div className="text-[11px] uppercase tracking-wider text-slate-400">{s.label}</div>
