@@ -26,8 +26,8 @@ function AuthPage() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState<Exclude<Role, "admin">>("airline");
-  const [airlines, setAirlines] = useState<{ code: string; name: string }[]>([]);
-  const [airline, setAirline] = useState("");
+  const [airlineCode, setAirlineCode] = useState("");
+  const [airlineName, setAirlineName] = useState("");
   const [fir, setFir] = useState(FIRS[0].code);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -35,12 +35,6 @@ function AuthPage() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) nav({ to: "/" });
-    });
-    supabase.from("airlines").select("code,name").order("name").then(({ data }) => {
-      if (data) {
-        setAirlines(data);
-        if (data[0]) setAirline(data[0].code);
-      }
     });
   }, [nav]);
 
@@ -54,8 +48,17 @@ function AuthPage() {
       if (mode === "signup") {
         if (!fullName.trim()) throw new Error("Full name is required");
         if (!strongOk) throw new Error("Password does not meet policy");
-        const scope = role === "airline" ? airline : fir;
-        if (!scope) throw new Error("Pick your organization");
+        let scope = "";
+        if (role === "airline") {
+          const code = airlineCode.trim().toUpperCase();
+          const name = airlineName.trim();
+          if (!/^[A-Z0-9]{2,8}$/.test(code)) throw new Error("Airline code must be 2–8 letters/digits (e.g. KQA)");
+          if (name.length < 2 || name.length > 80) throw new Error("Enter your airline name");
+          scope = code;
+        } else {
+          if (!fir) throw new Error("Pick your FIR");
+          scope = fir;
+        }
         const { error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -69,6 +72,14 @@ function AuthPage() {
           },
         });
         if (error) throw error;
+        if (role === "airline") {
+          // Register the airline (idempotent) so admin approval has a valid scope target.
+          const { error: rErr } = await supabase.rpc("register_airline", {
+            _code: airlineCode.trim().toUpperCase(),
+            _name: airlineName.trim(),
+          });
+          if (rErr) console.warn("register_airline:", rErr.message);
+        }
         nav({ to: "/" });
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
@@ -120,12 +131,10 @@ function AuthPage() {
               ))}
             </div>
             {role === "airline" ? (
-              <label className="block mt-2">
-                <span className="text-[10px] uppercase tracking-wider text-slate-400">Airline</span>
-                <select value={airline} onChange={(e) => setAirline(e.target.value)} className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none">
-                  {airlines.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
-                </select>
-              </label>
+              <div className="grid grid-cols-[1fr_2fr] gap-2 mt-2">
+                <Field label="Airline code" value={airlineCode} onChange={(v) => setAirlineCode(v.toUpperCase())} placeholder="KQA" />
+                <Field label="Airline name" value={airlineName} onChange={setAirlineName} placeholder="Kenya Airways" />
+              </div>
             ) : (
               <label className="block mt-2">
                 <span className="text-[10px] uppercase tracking-wider text-slate-400">FIR Hub</span>

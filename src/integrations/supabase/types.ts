@@ -308,6 +308,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_add_fir: {
+        Args: { _code: string; _name: string }
+        Returns: undefined
+      }
       approve_user: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -323,6 +327,10 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      register_airline: {
+        Args: { _code: string; _name: string }
+        Returns: undefined
       }
       user_scope: {
         Args: {

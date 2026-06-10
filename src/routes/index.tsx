@@ -918,7 +918,10 @@ function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPR
           </table>
         )}
       </div>
+      <FirManager />
       <div className="grid grid-cols-4 gap-4">
+
+
         {stats.map((s) => (
           <div key={s.label} className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
             <div className="text-[11px] uppercase tracking-wider text-slate-400">{s.label}</div>
@@ -957,6 +960,62 @@ function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPR
     </div>
   );
 }
+
+function FirManager() {
+  const [firs, setFirs] = useState<{ code: string; name: string }[]>([]);
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("firs").select("code,name").order("code");
+    setFirs((data ?? []) as any);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    setErr("");
+    const c = code.trim().toUpperCase();
+    const n = name.trim();
+    if (!/^[A-Z0-9]{2,8}$/.test(c)) { setErr("FIR code must be 2–8 letters/digits (e.g. HKNA)"); return; }
+    if (n.length < 2 || n.length > 80) { setErr("Enter a FIR name"); return; }
+    setBusy(true);
+    const { error } = await supabase.rpc("admin_add_fir", { _code: c, _name: n });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setCode(""); setName("");
+    await load();
+  };
+
+  return (
+    <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-sm font-semibold">Flight Information Regions ({firs.length})</div>
+        <button onClick={load} className="text-[11px] text-sky-400 hover:text-sky-300">Refresh</button>
+      </div>
+      <div className="grid grid-cols-[120px_1fr_auto] gap-2 mb-3">
+        <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="HKNA" maxLength={8}
+          className="bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm font-mono focus:ring-sky-500 outline-none" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nairobi FIR" maxLength={80}
+          className="bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none" />
+        <button onClick={add} disabled={busy} className="text-xs px-3 rounded-md bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold">
+          {busy ? "…" : "Add FIR"}
+        </button>
+      </div>
+      {err && <div className="text-[11px] text-rose-400 mb-2">{err}</div>}
+      <div className="flex flex-wrap gap-1.5">
+        {firs.map((f) => (
+          <span key={f.code} className="text-[11px] px-2 py-0.5 rounded bg-slate-800 ring-1 ring-slate-700">
+            <span className="font-mono text-sky-300">{f.code}</span> <span className="text-slate-400">{f.name}</span>
+          </span>
+        ))}
+        {firs.length === 0 && <div className="text-xs text-slate-500">No FIRs yet.</div>}
+      </div>
+    </div>
+  );
+}
+
 
 function EmptyCard({ text }: { text: string }) {
   return <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-10 text-center text-slate-400 text-sm">{text}</div>;
