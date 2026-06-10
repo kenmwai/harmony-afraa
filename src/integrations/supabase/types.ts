@@ -14,16 +14,317 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      airlines: {
+        Row: {
+          code: string
+          created_at: string
+          name: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          name: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          name?: string
+        }
+        Relationships: []
+      }
+      broadcasts: {
+        Row: {
+          author: string | null
+          author_label: string
+          author_role: string
+          created_at: string
+          id: string
+          severity: string
+          text: string
+        }
+        Insert: {
+          author?: string | null
+          author_label: string
+          author_role: string
+          created_at?: string
+          id?: string
+          severity?: string
+          text: string
+        }
+        Update: {
+          author?: string | null
+          author_label?: string
+          author_role?: string
+          created_at?: string
+          id?: string
+          severity?: string
+          text?: string
+        }
+        Relationships: []
+      }
+      chat_messages: {
+        Row: {
+          author: string | null
+          author_label: string
+          author_role: string
+          created_at: string
+          id: string
+          text: string
+          upr_id: string
+        }
+        Insert: {
+          author?: string | null
+          author_label: string
+          author_role: string
+          created_at?: string
+          id?: string
+          text: string
+          upr_id: string
+        }
+        Update: {
+          author?: string | null
+          author_label?: string
+          author_role?: string
+          created_at?: string
+          id?: string
+          text?: string
+          upr_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_upr_id_fkey"
+            columns: ["upr_id"]
+            isOneToOne: false
+            referencedRelation: "uprs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      firs: {
+        Row: {
+          code: string
+          created_at: string
+          name: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          name: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          name?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          approved: boolean
+          created_at: string
+          email: string
+          full_name: string
+          id: string
+          requested_role: Database["public"]["Enums"]["app_role"] | null
+          requested_scope: string | null
+        }
+        Insert: {
+          approved?: boolean
+          created_at?: string
+          email: string
+          full_name: string
+          id: string
+          requested_role?: Database["public"]["Enums"]["app_role"] | null
+          requested_scope?: string | null
+        }
+        Update: {
+          approved?: boolean
+          created_at?: string
+          email?: string
+          full_name?: string
+          id?: string
+          requested_role?: Database["public"]["Enums"]["app_role"] | null
+          requested_scope?: string | null
+        }
+        Relationships: []
+      }
+      segments: {
+        Row: {
+          amendment_name: string | null
+          amendment_path: string | null
+          amendment_size: number | null
+          entry: string
+          exit: string
+          fir_code: string
+          fl: string
+          id: string
+          note: string | null
+          order_idx: number
+          reason: string | null
+          revision: number
+          status: string
+          updated_at: string
+          upr_id: string
+        }
+        Insert: {
+          amendment_name?: string | null
+          amendment_path?: string | null
+          amendment_size?: number | null
+          entry: string
+          exit: string
+          fir_code: string
+          fl: string
+          id?: string
+          note?: string | null
+          order_idx: number
+          reason?: string | null
+          revision?: number
+          status?: string
+          updated_at?: string
+          upr_id: string
+        }
+        Update: {
+          amendment_name?: string | null
+          amendment_path?: string | null
+          amendment_size?: number | null
+          entry?: string
+          exit?: string
+          fir_code?: string
+          fl?: string
+          id?: string
+          note?: string | null
+          order_idx?: number
+          reason?: string | null
+          revision?: number
+          status?: string
+          updated_at?: string
+          upr_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "segments_fir_code_fkey"
+            columns: ["fir_code"]
+            isOneToOne: false
+            referencedRelation: "firs"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "segments_upr_id_fkey"
+            columns: ["upr_id"]
+            isOneToOne: false
+            referencedRelation: "uprs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      uprs: {
+        Row: {
+          aircraft: string
+          airline_code: string
+          arr: string
+          baseline_minutes: number
+          burn_kg_per_min: number
+          callsign: string
+          created_at: string
+          created_by: string
+          dep: string
+          flight_no: string
+          flight_plan_name: string | null
+          flight_plan_path: string | null
+          flight_plan_size: number | null
+          id: string
+          optimized_minutes: number
+        }
+        Insert: {
+          aircraft: string
+          airline_code: string
+          arr: string
+          baseline_minutes?: number
+          burn_kg_per_min?: number
+          callsign: string
+          created_at?: string
+          created_by: string
+          dep: string
+          flight_no: string
+          flight_plan_name?: string | null
+          flight_plan_path?: string | null
+          flight_plan_size?: number | null
+          id?: string
+          optimized_minutes?: number
+        }
+        Update: {
+          aircraft?: string
+          airline_code?: string
+          arr?: string
+          baseline_minutes?: number
+          burn_kg_per_min?: number
+          callsign?: string
+          created_at?: string
+          created_by?: string
+          dep?: string
+          flight_no?: string
+          flight_plan_name?: string | null
+          flight_plan_path?: string | null
+          flight_plan_size?: number | null
+          id?: string
+          optimized_minutes?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "uprs_airline_code_fkey"
+            columns: ["airline_code"]
+            isOneToOne: false
+            referencedRelation: "airlines"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          scope: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          scope?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          scope?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      user_scope: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: string
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "airline" | "ansp" | "admin"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +451,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["airline", "ansp", "admin"],
+    },
   },
 } as const
