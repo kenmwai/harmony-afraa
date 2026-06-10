@@ -269,6 +269,46 @@ function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
         <div className="text-[10px] text-slate-500 text-center mt-3">
           Strict role-based access · view is scoped to your role
         </div>
+
+        <div className="mt-4 pt-3 border-t border-slate-800">
+          {!showAdmin ? (
+            <button
+              onClick={() => setShowAdmin(true)}
+              className="w-full text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300 transition"
+            >
+              Admin access
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wider text-slate-400">Admin passcode</span>
+                <input
+                  type="password"
+                  value={adminCode}
+                  onChange={(e) => { setAdminCode(e.target.value); setAdminErr(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && submitAdmin()}
+                  placeholder="Enter backend-issued passcode"
+                  className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-fuchsia-500 outline-none"
+                />
+              </label>
+              {adminErr && <div className="text-[11px] text-rose-400">{adminErr}</div>}
+              <div className="flex gap-2">
+                <button
+                  onClick={submitAdmin}
+                  className="flex-1 bg-fuchsia-500 hover:bg-fuchsia-400 text-slate-950 font-semibold rounded-md py-1.5 text-xs"
+                >
+                  Authenticate admin
+                </button>
+                <button
+                  onClick={() => { setShowAdmin(false); setAdminCode(""); setAdminErr(""); }}
+                  className="px-3 bg-slate-800 hover:bg-slate-700 rounded-md py-1.5 text-xs text-slate-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
