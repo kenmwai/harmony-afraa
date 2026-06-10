@@ -863,7 +863,7 @@ function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPR
     setBusy(p.id);
     const role = (p.requested_role ?? "airline") as "airline" | "ansp" | "admin";
     const scope = p.requested_scope;
-    const { error } = await supabase.rpc("approve_user", { _user_id: p.id, _role: role, _scope: scope });
+    const { error } = await supabase.rpc("approve_user", { _user_id: p.id, _role: role, _scope: scope ?? "" });
     if (error) alert(error.message);
     await load();
     setBusy(null);
