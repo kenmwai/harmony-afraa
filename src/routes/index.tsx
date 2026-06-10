@@ -430,7 +430,11 @@ function AirlineView(props: {
   const myUprs = useMemo(() => uprs.filter((u) => u.airline === session.airline), [uprs, session.airline]);
 
   useEffect(() => {
-    if (!myUprs.find((u) => u.id === activeId)) setActiveId(myUprs[0]?.id ?? "");
+    if (myUprs.length === 0) {
+      if (activeId !== null) setActiveId(null);
+      return;
+    }
+    if (!myUprs.find((u) => u.id === activeId)) setActiveId(myUprs[0].id);
   }, [myUprs, activeId, setActiveId]);
 
   return (
