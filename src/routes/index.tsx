@@ -169,7 +169,7 @@ function UPRApp() {
             setBroadcasts={setBroadcasts}
           />
         )}
-        {session.role === "exec" && <ExecView uprs={uprs} />}
+        {session.role === "admin" && <AdminView uprs={uprs} />}
       </div>
     </div>
   );
