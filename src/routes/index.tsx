@@ -115,11 +115,11 @@ const seedUPRs = (): UPR[] => [
 ];
 
 // ───────────────────────── Auth / Role gate ─────────────────────────
-type Role = "airline" | "ansp" | "exec";
+type Role = "airline" | "ansp" | "admin";
 type Session =
   | { role: "airline"; name: string; airline: string }
   | { role: "ansp"; name: string; fir: string }
-  | { role: "exec"; name: string };
+  | { role: "admin"; name: string };
 
 function UPRApp() {
   const [session, setSession] = useState<Session | null>(null);
@@ -169,7 +169,7 @@ function UPRApp() {
             setBroadcasts={setBroadcasts}
           />
         )}
-        {session.role === "exec" && <ExecView uprs={uprs} />}
+        {session.role === "admin" && <AdminView uprs={uprs} />}
       </div>
     </div>
   );
@@ -193,7 +193,7 @@ function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
   const roles: { id: Role; label: string; sub: string }[] = [
     { id: "airline", label: "Airline Dispatcher", sub: "Submit UPRs · attach flight plan PDF · respond to amendments" },
     { id: "ansp", label: "ANSP / Regulator", sub: "Review FIR segment · approve / amend with PDF / reject" },
-    { id: "exec", label: "Executive Analytics", sub: "Read-only impact dashboard" },
+    { id: "admin", label: "Admin", sub: "Operational analytics & oversight dashboard" },
   ];
 
   return (
@@ -268,7 +268,7 @@ function TopBar({ session, onSignOut }: { session: Session; onSignOut: () => voi
   const roleLabel =
     session.role === "airline" ? `${session.airline} · Dispatcher` :
     session.role === "ansp" ? `${session.fir} ${FIRS.find((f) => f.code === session.fir)?.name ?? ""} · Controller` :
-    "Executive Analytics";
+    "Admin · Oversight";
   const roleColor =
     session.role === "airline" ? "from-sky-500 to-cyan-500" :
     session.role === "ansp" ? "from-amber-500 to-orange-500" :
@@ -941,7 +941,7 @@ function ANSPDecisionPanel({ upr, seg, fir, updateUPR }: { upr: UPR; seg: Segmen
 }
 
 // ───────────────────────── Executive View ─────────────────────────
-function ExecView({ uprs }: { uprs: UPR[] }) {
+function AdminView({ uprs }: { uprs: UPR[] }) {
   const approved = uprs.filter((u) => computeVerdict(u) === "APPROVED");
   const minSaved = approved.reduce((s, u) => s + Math.max(0, u.baselineMinutes - u.optimizedMinutes), 0);
   const fuelSaved = approved.reduce((s, u) => s + Math.max(0, u.baselineMinutes - u.optimizedMinutes) * u.burnKgPerMin, 0);
