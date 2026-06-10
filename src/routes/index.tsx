@@ -175,25 +175,36 @@ function UPRApp() {
   );
 }
 
+const ADMIN_PASSCODE = "UPR-ADMIN-2026";
+
 function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
-  const [role, setRole] = useState<Role>("airline");
+  const [role, setRole] = useState<Exclude<Role, "admin">>("airline");
   const [name, setName] = useState("");
   const [airline, setAirline] = useState("Kenya Airways");
   const [fir, setFir] = useState("HTDC");
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminCode, setAdminCode] = useState("");
+  const [adminErr, setAdminErr] = useState("");
 
   const canSubmit = name.trim().length > 0;
 
   const submit = () => {
     if (!canSubmit) return;
     if (role === "airline") onSignIn({ role, name: name.trim(), airline });
-    else if (role === "ansp") onSignIn({ role, name: name.trim(), fir });
-    else onSignIn({ role, name: name.trim() });
+    else onSignIn({ role, name: name.trim(), fir });
   };
 
-  const roles: { id: Role; label: string; sub: string }[] = [
+  const submitAdmin = () => {
+    if (adminCode.trim() === ADMIN_PASSCODE) {
+      onSignIn({ role: "admin", name: "Administrator" });
+    } else {
+      setAdminErr("Invalid admin passcode");
+    }
+  };
+
+  const roles: { id: Exclude<Role, "admin">; label: string; sub: string }[] = [
     { id: "airline", label: "Airline Dispatcher", sub: "Submit UPRs · attach flight plan PDF · respond to amendments" },
     { id: "ansp", label: "ANSP / Regulator", sub: "Review FIR segment · approve / amend with PDF / reject" },
-    { id: "admin", label: "Admin", sub: "Operational analytics & oversight dashboard" },
   ];
 
   return (
@@ -257,6 +268,46 @@ function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
 
         <div className="text-[10px] text-slate-500 text-center mt-3">
           Strict role-based access · view is scoped to your role
+        </div>
+
+        <div className="mt-4 pt-3 border-t border-slate-800">
+          {!showAdmin ? (
+            <button
+              onClick={() => setShowAdmin(true)}
+              className="w-full text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300 transition"
+            >
+              Admin access
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wider text-slate-400">Admin passcode</span>
+                <input
+                  type="password"
+                  value={adminCode}
+                  onChange={(e) => { setAdminCode(e.target.value); setAdminErr(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && submitAdmin()}
+                  placeholder="Enter backend-issued passcode"
+                  className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-fuchsia-500 outline-none"
+                />
+              </label>
+              {adminErr && <div className="text-[11px] text-rose-400">{adminErr}</div>}
+              <div className="flex gap-2">
+                <button
+                  onClick={submitAdmin}
+                  className="flex-1 bg-fuchsia-500 hover:bg-fuchsia-400 text-slate-950 font-semibold rounded-md py-1.5 text-xs"
+                >
+                  Authenticate admin
+                </button>
+                <button
+                  onClick={() => { setShowAdmin(false); setAdminCode(""); setAdminErr(""); }}
+                  className="px-3 bg-slate-800 hover:bg-slate-700 rounded-md py-1.5 text-xs text-slate-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
