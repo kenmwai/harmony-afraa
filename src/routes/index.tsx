@@ -193,7 +193,7 @@ function SignIn({ onSignIn }: { onSignIn: (s: Session) => void }) {
   const roles: { id: Role; label: string; sub: string }[] = [
     { id: "airline", label: "Airline Dispatcher", sub: "Submit UPRs · attach flight plan PDF · respond to amendments" },
     { id: "ansp", label: "ANSP / Regulator", sub: "Review FIR segment · approve / amend with PDF / reject" },
-    { id: "exec", label: "Executive Analytics", sub: "Read-only impact dashboard" },
+    { id: "admin", label: "Admin", sub: "Operational analytics & oversight dashboard" },
   ];
 
   return (
