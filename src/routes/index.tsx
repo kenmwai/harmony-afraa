@@ -6,7 +6,7 @@ import {
   type AppSession, type BroadcastRow, type ChatRow, type SegmentRow, type SegStatus, type UPRRow,
   fmtBytes, fmtTime,
 } from "@/lib/upr-types";
-import { uploadPdf, getSignedUrl } from "@/lib/upr-storage";
+import { uploadPdf, viewPdf, downloadPdf } from "@/lib/upr-storage";
 
 export const Route = createFileRoute("/")({
   ssr: false,
