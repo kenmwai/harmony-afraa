@@ -6,7 +6,7 @@ import {
   type AppSession, type BroadcastRow, type ChatRow, type SegmentRow, type SegStatus, type UPRRow,
   fmtBytes, fmtTime,
 } from "@/lib/upr-types";
-import { uploadPdf, getSignedUrl } from "@/lib/upr-storage";
+import { uploadPdf, viewPdf, downloadPdf } from "@/lib/upr-storage";
 
 export const Route = createFileRoute("/")({
   ssr: false,
@@ -230,25 +230,50 @@ function PdfPicker({ label, onPick, attached }: { label: string; onPick: (f: Fil
     </div>
   );
 }
-function SignedOpenButton({ path }: { path: string }) {
+function SignedOpenButton({ path, name }: { path: string; name?: string }) {
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
   const open = async () => {
-    setBusy(true);
-    try { const url = await getSignedUrl(path); window.open(url, "_blank"); } catch {}
+    setBusy(true); setErr("");
+    try { await viewPdf(path); } catch (e: any) { setErr(e?.message ?? "Failed"); }
     setBusy(false);
   };
-  return <button onClick={open} disabled={busy} className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700">{busy ? "…" : "Open"}</button>;
+  const dl = async () => {
+    setBusy(true); setErr("");
+    try { await downloadPdf(path, name ?? "flightplan.pdf"); } catch (e: any) { setErr(e?.message ?? "Failed"); }
+    setBusy(false);
+  };
+  return (
+    <span className="inline-flex items-center gap-1">
+      <button onClick={open} disabled={busy} className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">{busy ? "…" : "View"}</button>
+      <button onClick={dl} disabled={busy} className="text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40">Download</button>
+      {err && <span className="text-[10px] text-rose-400">{err}</span>}
+    </span>
+  );
 }
 function PdfBadge({ path, name, size, label }: { path: string; name: string; size: number; label: string }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => { getSignedUrl(path).then(setUrl).catch(() => {}); }, [path]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const open = async () => {
+    setBusy(true); setErr("");
+    try { await viewPdf(path); } catch (e: any) { setErr(e?.message ?? "Failed"); }
+    setBusy(false);
+  };
+  const dl = async () => {
+    setBusy(true); setErr("");
+    try { await downloadPdf(path, name); } catch (e: any) { setErr(e?.message ?? "Failed"); }
+    setBusy(false);
+  };
   return (
-    <a href={url ?? "#"} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-md bg-slate-950/60 ring-1 ring-slate-700 hover:ring-sky-500/60 px-2 py-1 text-[11px]">
+    <div className="inline-flex flex-wrap items-center gap-1.5 rounded-md bg-slate-950/60 ring-1 ring-slate-700 px-2 py-1 text-[11px]">
       <span className="text-red-400">📄</span>
       <span className="font-medium text-slate-200">{label}</span>
       <span className="text-slate-500 truncate max-w-[140px]">{name}</span>
       <span className="text-slate-500">· {fmtBytes(size)}</span>
-    </a>
+      <button onClick={open} disabled={busy} className="ml-1 px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-[10px]">{busy ? "…" : "View"}</button>
+      <button onClick={dl} disabled={busy} className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-[10px]">Download</button>
+      {err && <span className="text-[10px] text-rose-400 w-full">{err}</span>}
+    </div>
   );
 }
 
