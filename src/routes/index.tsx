@@ -379,7 +379,14 @@ function NewUPRForm({ session, onCreated }: { session: AppSession; onCreated: (i
         <Input label="Flight #" value={flightNo} onChange={setFlightNo} placeholder="KQ 310" />
         <Input label="Dep" value={dep} onChange={setDep} placeholder="HKJK" />
         <Input label="Arr" value={arr} onChange={setArr} placeholder="FACT" />
-        <Input label="A/C" value={aircraft} onChange={setAircraft} placeholder="B788" />
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1">A/C</div>
+          <select value={aircraft} onChange={(e) => setAircraft(e.target.value)} className="w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none">
+            {acTypes.length === 0 && <option value={aircraft}>{aircraft}</option>}
+            {acTypes.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name} ({a.burn_kg_per_min} kg/min)</option>)}
+          </select>
+        </div>
+
         <Input label="Baseline min" value={String(baseline)} onChange={(v) => setBaseline(+v || 0)} />
         <Input label="UPR min" value={String(optimized)} onChange={(v) => setOptimized(+v || 0)} />
       </div>
