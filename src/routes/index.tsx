@@ -325,6 +325,13 @@ function NewUPRForm({ session, onCreated }: { session: AppSession; onCreated: (i
   const [pendingPdf, setPendingPdf] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [acTypes, setAcTypes] = useState<{ code: string; name: string; burn_kg_per_min: number }[]>([]);
+
+  useEffect(() => {
+    supabase.from("aircraft_types").select("code,name,burn_kg_per_min").order("code").then(({ data }) => {
+      setAcTypes((data ?? []) as any);
+    });
+  }, []);
 
   const setFir = (i: number, v: string) => setFirs((p) => p.map((x, idx) => (idx === i ? v : x)));
   const submit = async () => {
@@ -332,10 +339,13 @@ function NewUPRForm({ session, onCreated }: { session: AppSession; onCreated: (i
     try {
       const chosen = firs.filter(Boolean);
       if (!callsign || !flightNo || chosen.length < 1) throw new Error("Callsign, flight # and at least one FIR required");
+      const acCode = aircraft.trim().toUpperCase();
+      const matched = acTypes.find((a) => a.code === acCode);
+      const burn = matched ? Number(matched.burn_kg_per_min) : 48;
       const { data: u, error } = await supabase.from("uprs").insert({
-        callsign, flight_no: flightNo, dep: dep || "----", arr: arr || "----", aircraft,
+        callsign, flight_no: flightNo, dep: dep || "----", arr: arr || "----", aircraft: acCode,
         airline_code: session.scope!, created_by: session.userId,
-        baseline_minutes: baseline, optimized_minutes: optimized, burn_kg_per_min: 48,
+        baseline_minutes: baseline, optimized_minutes: optimized, burn_kg_per_min: burn,
       }).select().single();
       if (error) throw error;
 
@@ -359,6 +369,7 @@ function NewUPRForm({ session, onCreated }: { session: AppSession; onCreated: (i
     } catch (e: any) { setErr(e?.message ?? "Failed"); }
     setBusy(false);
   };
+
 
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
