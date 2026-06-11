@@ -1061,6 +1061,100 @@ function FirManager() {
   );
 }
 
+function AircraftManager() {
+  type AC = { code: string; name: string; burn_kg_per_min: number };
+  const [rows, setRows] = useState<AC[]>([]);
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [burn, setBurn] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [editing, setEditing] = useState<Record<string, string>>({});
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("aircraft_types").select("code,name,burn_kg_per_min").order("code");
+    setRows((data ?? []) as any);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const upsert = async (c: string, n: string, b: number) => {
+    setErr("");
+    const cu = c.trim().toUpperCase();
+    const nt = n.trim();
+    if (!/^[A-Z0-9]{2,8}$/.test(cu)) { setErr("Code must be 2–8 letters/digits"); return false; }
+    if (nt.length < 2) { setErr("Enter aircraft name"); return false; }
+    if (!isFinite(b) || b <= 0 || b > 1000) { setErr("Burn rate must be between 0 and 1000 kg/min"); return false; }
+    setBusy(true);
+    const { error } = await supabase.rpc("admin_upsert_aircraft", { _code: cu, _name: nt, _burn: b });
+    setBusy(false);
+    if (error) { setErr(error.message); return false; }
+    await load();
+    return true;
+  };
+
+  const add = async () => {
+    const ok = await upsert(code, name, parseFloat(burn));
+    if (ok) { setCode(""); setName(""); setBurn(""); }
+  };
+
+  const saveRow = async (r: AC) => {
+    const newBurn = parseFloat(editing[r.code] ?? String(r.burn_kg_per_min));
+    await upsert(r.code, r.name, newBurn);
+    setEditing((e) => { const n = { ...e }; delete n[r.code]; return n; });
+  };
+
+  return (
+    <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-sm font-semibold">Aircraft types & burn rates ({rows.length})</div>
+        <button onClick={load} className="text-[11px] text-sky-400 hover:text-sky-300">Refresh</button>
+      </div>
+      <div className="text-[11px] text-slate-500 mb-3">Burn rate is kg of jet fuel per minute. 1 kg fuel saved ≈ 3.16 kg CO₂ avoided.</div>
+      <div className="grid grid-cols-[110px_1fr_140px_auto] gap-2 mb-3">
+        <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="B788" maxLength={8}
+          className="bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm font-mono focus:ring-sky-500 outline-none" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Boeing 787-8" maxLength={80}
+          className="bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none" />
+        <input value={burn} onChange={(e) => setBurn(e.target.value)} placeholder="kg/min" inputMode="decimal"
+          className="bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none" />
+        <button onClick={add} disabled={busy} className="text-xs px-3 rounded-md bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold">
+          {busy ? "…" : "Add / Update"}
+        </button>
+      </div>
+      {err && <div className="text-[11px] text-rose-400 mb-2">{err}</div>}
+      <table className="w-full text-sm">
+        <thead className="text-[11px] uppercase tracking-wider text-slate-400">
+          <tr><th className="text-left py-2">Code</th><th className="text-left">Name</th><th className="text-right">Burn (kg/min)</th><th className="text-right">CO₂ (kg/min)</th><th className="text-right">Action</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const isEditing = editing[r.code] !== undefined;
+            const curVal = isEditing ? editing[r.code] : String(r.burn_kg_per_min);
+            const numeric = parseFloat(curVal);
+            return (
+              <tr key={r.code} className="border-t border-slate-800">
+                <td className="py-2 font-mono text-sky-300">{r.code}</td>
+                <td className="text-slate-300">{r.name}</td>
+                <td className="text-right">
+                  <input value={curVal} onChange={(e) => setEditing((s) => ({ ...s, [r.code]: e.target.value }))}
+                    className="w-24 text-right bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1 text-sm focus:ring-sky-500 outline-none" />
+                </td>
+                <td className="text-right text-emerald-300">{isFinite(numeric) ? (numeric * 3.16).toFixed(1) : "—"}</td>
+                <td className="text-right">
+                  <button onClick={() => saveRow(r)} disabled={busy || !isEditing}
+                    className="text-[11px] px-2 py-1 rounded bg-emerald-500 hover:bg-emerald-400 disabled:opacity-30 text-emerald-950 font-semibold">Save</button>
+                </td>
+              </tr>
+            );
+          })}
+          {rows.length === 0 && <tr><td colSpan={5} className="text-center text-xs text-slate-500 py-4">No aircraft types yet.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
 
 function EmptyCard({ text }: { text: string }) {
   return <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-10 text-center text-slate-400 text-sm">{text}</div>;
