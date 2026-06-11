@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      aircraft_types: {
+        Row: {
+          burn_kg_per_min: number
+          code: string
+          created_at: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          burn_kg_per_min: number
+          code: string
+          created_at?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          burn_kg_per_min?: number
+          code?: string
+          created_at?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       airlines: {
         Row: {
           code: string
@@ -310,6 +334,10 @@ export type Database = {
     Functions: {
       admin_add_fir: {
         Args: { _code: string; _name: string }
+        Returns: undefined
+      }
+      admin_upsert_aircraft: {
+        Args: { _burn: number; _code: string; _name: string }
         Returns: undefined
       }
       approve_user: {
