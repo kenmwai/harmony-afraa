@@ -12,8 +12,8 @@ export const Route = createFileRoute("/")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "UPR Coordination Platform" },
-      { name: "description", content: "African User Preferred Routes coordination — segment-by-segment ANSP negotiation." },
+      { title: "Harmony by AFRAA" },
+      { name: "description", content: "Harmony by AFRAA — African User Preferred Routes coordination platform." },
     ],
   }),
   component: Gate,
@@ -175,9 +175,9 @@ function TopBar({ session }: { session: AppSession }) {
     <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
       <div className="mx-auto max-w-[1500px] px-6 py-3 flex items-center justify-between gap-6">
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">U</div>
+          <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">H</div>
           <div>
-            <div className="font-semibold tracking-tight">UPR Coordination Platform</div>
+            <div className="font-semibold tracking-tight">Harmony by AFRAA</div>
             <div className="text-[11px] text-slate-400 -mt-0.5">African User Preferred Routes · Production</div>
           </div>
         </div>
