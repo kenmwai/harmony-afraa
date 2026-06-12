@@ -975,33 +975,7 @@ function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPR
           </div>
         ))}
       </div>
-      <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
-        <div className="text-sm font-semibold mb-3">Recent UPR activity</div>
-        <table className="w-full text-sm">
-          <thead className="text-[11px] uppercase tracking-wider text-slate-400">
-            <tr><th className="text-left py-2">Callsign</th><th className="text-left">Airline</th><th className="text-left">Route</th><th className="text-left">FIRs</th><th className="text-right">Δ min</th><th className="text-right">CO₂ avoided</th><th className="text-right">Verdict</th></tr>
-          </thead>
-          <tbody>
-            {uprs.map((u) => {
-              const segs = segments.filter((s) => s.upr_id === u.id).sort((a, b) => a.order_idx - b.order_idx);
-              const dm = Math.max(0, u.baseline_minutes - u.optimized_minutes);
-              const c = dm * Number(u.burn_kg_per_min) * 3.16;
-              return (
-                <tr key={u.id} className="border-t border-slate-800">
-                  <td className="py-2 font-mono">{u.callsign}</td>
-                  <td className="text-slate-300">{u.airline_code}</td>
-                  <td>{u.dep} → {u.arr}</td>
-                  <td className="text-slate-400">{segs.map((s) => s.fir_code).join(" → ")}</td>
-                  <td className="text-right text-emerald-300">{dm}</td>
-                  <td className="text-right">{c.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg</td>
-                  <td className="text-right"><VerdictPill verdict={computeVerdict(segs)} /></td>
-                </tr>
-              );
-            })}
-            {uprs.length === 0 && <tr><td colSpan={7} className="text-center text-xs text-slate-500 py-6">No UPRs yet.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <AdminUprActivity uprs={uprs} segments={segments} />
     </div>
   );
 }
