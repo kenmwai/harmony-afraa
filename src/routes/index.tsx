@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   FIRS, REJECT_REASONS, STATUS_META,
@@ -975,33 +975,93 @@ function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPR
           </div>
         ))}
       </div>
-      <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
-        <div className="text-sm font-semibold mb-3">Recent UPR activity</div>
-        <table className="w-full text-sm">
-          <thead className="text-[11px] uppercase tracking-wider text-slate-400">
-            <tr><th className="text-left py-2">Callsign</th><th className="text-left">Airline</th><th className="text-left">Route</th><th className="text-left">FIRs</th><th className="text-right">Δ min</th><th className="text-right">CO₂ avoided</th><th className="text-right">Verdict</th></tr>
-          </thead>
-          <tbody>
-            {uprs.map((u) => {
-              const segs = segments.filter((s) => s.upr_id === u.id).sort((a, b) => a.order_idx - b.order_idx);
-              const dm = Math.max(0, u.baseline_minutes - u.optimized_minutes);
-              const c = dm * Number(u.burn_kg_per_min) * 3.16;
-              return (
-                <tr key={u.id} className="border-t border-slate-800">
+      <AdminUprActivity uprs={uprs} segments={segments} />
+    </div>
+  );
+}
+
+// ─────────── Admin UPR activity with FIR color coding + PDFs from both parties ───────────
+function AdminUprActivity({ uprs, segments }: { uprs: UPRRow[]; segments: SegmentRow[] }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  return (
+    <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
+      <div className="text-sm font-semibold mb-1">UPR progress & attachments</div>
+      <p className="text-[11px] text-slate-500 mb-3">FIR names are color-coded by their current segment status — click a row to view all PDFs submitted by the airline and ANSPs.</p>
+      <table className="w-full text-sm">
+        <thead className="text-[11px] uppercase tracking-wider text-slate-400">
+          <tr><th className="text-left py-2">Callsign</th><th className="text-left">Airline</th><th className="text-left">Route</th><th className="text-left">FIRs (status)</th><th className="text-right">Δ min</th><th className="text-right">CO₂ avoided</th><th className="text-right">Verdict</th></tr>
+        </thead>
+        <tbody>
+          {uprs.map((u) => {
+            const segs = segments.filter((s) => s.upr_id === u.id).sort((a, b) => a.order_idx - b.order_idx);
+            const dm = Math.max(0, u.baseline_minutes - u.optimized_minutes);
+            const c = dm * Number(u.burn_kg_per_min) * 3.16;
+            const isOpen = expanded === u.id;
+            const amendments = segs.filter((s) => s.amendment_path && s.amendment_name);
+            return (
+              <Fragment key={u.id}>
+                <tr className="border-t border-slate-800 cursor-pointer hover:bg-slate-800/40" onClick={() => setExpanded(isOpen ? null : u.id)}>
                   <td className="py-2 font-mono">{u.callsign}</td>
                   <td className="text-slate-300">{u.airline_code}</td>
                   <td>{u.dep} → {u.arr}</td>
-                  <td className="text-slate-400">{segs.map((s) => s.fir_code).join(" → ")}</td>
+                  <td>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {segs.map((s, i) => {
+                        const m = STATUS_META[s.status];
+                        return (
+                          <Fragment key={s.id}>
+                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ring-1 ${m.bg} ${m.color} ${m.ring}`} title={m.label}>
+                              <span className={`h-1.5 w-1.5 rounded-full ${m.dot}`} />
+                              <span className="font-mono text-[11px]">{s.fir_code}</span>
+                            </span>
+                            {i < segs.length - 1 && <span className="text-slate-600">→</span>}
+                          </Fragment>
+                        );
+                      })}
+                      {segs.length === 0 && <span className="text-slate-500 text-xs">—</span>}
+                    </div>
+                  </td>
                   <td className="text-right text-emerald-300">{dm}</td>
                   <td className="text-right">{c.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg</td>
                   <td className="text-right"><VerdictPill verdict={computeVerdict(segs)} /></td>
                 </tr>
-              );
-            })}
-            {uprs.length === 0 && <tr><td colSpan={7} className="text-center text-xs text-slate-500 py-6">No UPRs yet.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+                {isOpen && (
+                  <tr className="border-t border-slate-800 bg-slate-950/40">
+                    <td colSpan={7} className="p-4">
+                      <div className="space-y-3">
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1.5">Airline submission</div>
+                          {u.flight_plan_path && u.flight_plan_name ? (
+                            <PdfBadge path={u.flight_plan_path} name={u.flight_plan_name} size={u.flight_plan_size ?? 0} label="Flight Plan" />
+                          ) : (
+                            <div className="text-xs text-slate-500">No flight plan PDF attached.</div>
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-slate-400 mb-1.5">ANSP amendments ({amendments.length})</div>
+                          {amendments.length === 0 ? (
+                            <div className="text-xs text-slate-500">No amendment charts uploaded.</div>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              {amendments.map((s) => (
+                                <div key={s.id} className="flex flex-col gap-1">
+                                  <div className="text-[10px] font-mono text-slate-400">{s.fir_code} · {STATUS_META[s.status].label}</div>
+                                  <PdfBadge path={s.amendment_path!} name={s.amendment_name!} size={s.amendment_size ?? 0} label="Amendment" />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+          {uprs.length === 0 && <tr><td colSpan={7} className="text-center text-xs text-slate-500 py-6">No UPRs yet.</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }
