@@ -19,6 +19,26 @@ export async function uploadPdf(
   return { path, name: file.name, size: file.size };
 }
 
+export async function uploadIncidentImage(file: File, uprId: string): Promise<string> {
+  if (!file.type.startsWith("image/")) throw new Error("Image only");
+  if (file.size > 8 * 1024 * 1024) throw new Error("Max 8 MB");
+  const ext = file.name.split(".").pop() ?? "jpg";
+  const path = `${uprId}/incidents/${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage
+    .from("upr-attachments")
+    .upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw new Error(error.message || "Upload failed");
+  return path;
+}
+
+export async function getImageUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from("upr-attachments")
+    .createSignedUrl(path, 60 * 60);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
 export async function getSignedUrl(path: string, filename?: string): Promise<string> {
   const { data, error } = await supabase.storage
     .from("upr-attachments")
