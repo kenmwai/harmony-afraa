@@ -56,9 +56,13 @@ function AuthPage() {
           if (!/^[A-Z0-9]{2,8}$/.test(code)) throw new Error("Airline code must be 2–8 letters/digits (e.g. KQA)");
           if (name.length < 2 || name.length > 80) throw new Error("Enter your airline name");
           scope = code;
-        } else {
+        } else if (role === "ansp") {
           if (!fir) throw new Error("Pick your FIR");
           scope = fir;
+        } else {
+          const n = orgName.trim();
+          if (n.length < 2 || n.length > 80) throw new Error("Enter your organisation / authority name");
+          scope = n.toUpperCase().replace(/\s+/g, "_").slice(0, 60);
         }
         const { error } = await supabase.auth.signUp({
           email: email.trim(),
