@@ -124,14 +124,14 @@ function AuthPage() {
         {mode === "signup" && (
           <>
             <Field label="Full name" value={fullName} onChange={setFullName} placeholder="Jane Doe" />
-            <div className="grid grid-cols-2 gap-1.5 mt-2">
-              {(["airline", "ansp"] as const).map((r) => (
+            <div className="grid grid-cols-3 gap-1.5 mt-2">
+              {(["airline", "ansp", "regulator"] as const).map((r) => (
                 <button
                   key={r}
                   onClick={() => setRole(r)}
-                  className={`text-xs py-1.5 rounded-md ring-1 transition ${role === r ? "bg-slate-800 ring-sky-500/60" : "bg-slate-950/40 ring-slate-800 text-slate-400 hover:text-slate-200"}`}
+                  className={`text-[11px] py-1.5 rounded-md ring-1 transition ${role === r ? "bg-slate-800 ring-sky-500/60" : "bg-slate-950/40 ring-slate-800 text-slate-400 hover:text-slate-200"}`}
                 >
-                  {r === "airline" ? "Airline Dispatcher" : "ANSP / Regulator"}
+                  {r === "airline" ? "Airline" : r === "ansp" ? "ANSP" : "Regulator / Observer"}
                 </button>
               ))}
             </div>
@@ -140,13 +140,15 @@ function AuthPage() {
                 <Field label="Airline code" value={airlineCode} onChange={(v) => setAirlineCode(v.toUpperCase())} placeholder="KQA" />
                 <Field label="Airline name" value={airlineName} onChange={setAirlineName} placeholder="Kenya Airways" />
               </div>
-            ) : (
+            ) : role === "ansp" ? (
               <label className="block mt-2">
                 <span className="text-[10px] uppercase tracking-wider text-slate-400">FIR Hub</span>
                 <select value={fir} onChange={(e) => setFir(e.target.value)} className="mt-0.5 w-full bg-slate-950/60 ring-1 ring-slate-800 rounded-md px-2 py-1.5 text-sm focus:ring-sky-500 outline-none">
                   {FIRS.map((f) => <option key={f.code} value={f.code}>{f.code} — {f.name}</option>)}
                 </select>
               </label>
+            ) : (
+              <Field label="Organisation / Authority" value={orgName} onChange={setOrgName} placeholder="ICAO ESAF Office" />
             )}
           </>
         )}
