@@ -142,6 +142,56 @@ export type Database = {
         }
         Relationships: []
       }
+      incidents: {
+        Row: {
+          author: string
+          author_label: string
+          created_at: string
+          description: string
+          id: string
+          image_paths: string[]
+          party: string
+          party_scope: string
+          rating: number | null
+          severity: string
+          upr_id: string
+        }
+        Insert: {
+          author: string
+          author_label: string
+          created_at?: string
+          description: string
+          id?: string
+          image_paths?: string[]
+          party: string
+          party_scope: string
+          rating?: number | null
+          severity: string
+          upr_id: string
+        }
+        Update: {
+          author?: string
+          author_label?: string
+          created_at?: string
+          description?: string
+          id?: string
+          image_paths?: string[]
+          party?: string
+          party_scope?: string
+          rating?: number | null
+          severity?: string
+          upr_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "incidents_upr_id_fkey"
+            columns: ["upr_id"]
+            isOneToOne: false
+            referencedRelation: "uprs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           approved: boolean
@@ -258,6 +308,7 @@ export type Database = {
           flight_plan_size: number | null
           id: string
           optimized_minutes: number
+          trial_at: string | null
         }
         Insert: {
           aircraft: string
@@ -275,6 +326,7 @@ export type Database = {
           flight_plan_size?: number | null
           id?: string
           optimized_minutes?: number
+          trial_at?: string | null
         }
         Update: {
           aircraft?: string
@@ -292,6 +344,7 @@ export type Database = {
           flight_plan_size?: number | null
           id?: string
           optimized_minutes?: number
+          trial_at?: string | null
         }
         Relationships: [
           {
@@ -356,6 +409,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_regulator: { Args: { _uid: string }; Returns: boolean }
       register_airline: {
         Args: { _code: string; _name: string }
         Returns: undefined
@@ -369,7 +423,7 @@ export type Database = {
       }
     }
     Enums: {
-      app_role: "airline" | "ansp" | "admin"
+      app_role: "airline" | "ansp" | "admin" | "regulator"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -497,7 +551,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["airline", "ansp", "admin"],
+      app_role: ["airline", "ansp", "admin", "regulator"],
     },
   },
 } as const
