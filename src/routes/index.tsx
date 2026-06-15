@@ -916,7 +916,7 @@ function AdminView({ session, uprs, segments, incidents }: { session: AppSession
 
   const approve = async (p: PendingRow) => {
     setBusy(p.id);
-    const role = (p.requested_role ?? "airline") as "airline" | "ansp" | "admin";
+    const role = (p.requested_role ?? "airline") as "airline" | "ansp" | "admin" | "regulator";
     const scope = p.requested_scope;
     const { error } = await supabase.rpc("approve_user", { _user_id: p.id, _role: role, _scope: scope ?? "" });
     if (error) alert(error.message);
