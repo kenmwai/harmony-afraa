@@ -987,7 +987,9 @@ function AdminView({ session, uprs, segments, incidents }: { session: AppSession
           </div>
         ))}
       </div>
+      <TrialCalendar uprs={uprs} segments={segments} title="Aggregated trial calendar" filter={{ type: "all" }} />
       <AdminUprActivity uprs={uprs} segments={segments} />
+      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="All trials across the network" />
     </div>
   );
 }
