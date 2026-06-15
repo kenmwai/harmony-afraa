@@ -28,6 +28,7 @@ function AuthPage() {
   const [role, setRole] = useState<Exclude<Role, "admin">>("airline");
   const [airlineCode, setAirlineCode] = useState("");
   const [airlineName, setAirlineName] = useState("");
+  const [orgName, setOrgName] = useState("");
   const [fir, setFir] = useState(FIRS[0].code);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
