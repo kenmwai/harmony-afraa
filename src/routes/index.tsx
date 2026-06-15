@@ -686,6 +686,8 @@ function ANSPView({ session, uprs, segments, broadcasts, activeId, setActiveId, 
             <UPRHeader upr={active} />
             <SegmentMatrix segs={activeSegments} />
             <ANSPDecisionPanel upr={active} seg={mySeg} fir={fir} session={session} />
+            <IncidentForm upr={active} session={session} />
+            <TrialCalendar uprs={uprs} segments={segments} title={`${fir} trial calendar`} filter={{ type: "fir", code: fir }} />
           </>
         ) : <EmptyCard text={`No active request for ${fir}.`} />}
       </main>
