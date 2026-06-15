@@ -171,10 +171,12 @@ function TopBar({ session }: { session: AppSession }) {
   const label =
     session.role === "airline" ? `${session.scope} · Dispatcher` :
     session.role === "ansp" ? `${session.scope} ${FIRS.find((f) => f.code === session.scope)?.name ?? ""} · Controller` :
+    session.role === "regulator" ? `${session.scope} · Regulator` :
     "Admin · Oversight";
   const color =
     session.role === "airline" ? "from-sky-500 to-cyan-500" :
     session.role === "ansp" ? "from-amber-500 to-orange-500" :
+    session.role === "regulator" ? "from-indigo-500 to-violet-500" :
     "from-fuchsia-500 to-pink-500";
   return (
     <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
