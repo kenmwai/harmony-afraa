@@ -1,5 +1,20 @@
-export type Role = "airline" | "ansp" | "admin";
+export type Role = "airline" | "ansp" | "admin" | "regulator";
 export type SegStatus = "pending" | "approved" | "amended" | "rejected";
+export type IncidentSeverity = "none" | "minor" | "major" | "critical";
+
+export type IncidentRow = {
+  id: string;
+  upr_id: string;
+  author: string;
+  author_label: string;
+  party: "airline" | "ansp";
+  party_scope: string;
+  rating: number | null;
+  severity: IncidentSeverity;
+  description: string;
+  image_paths: string[];
+  created_at: string;
+};
 
 export type UPRRow = {
   id: string;
