@@ -3,10 +3,11 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { supabase } from "@/integrations/supabase/client";
 import {
   FIRS, REJECT_REASONS, STATUS_META,
-  type AppSession, type BroadcastRow, type ChatRow, type SegmentRow, type SegStatus, type UPRRow,
+  type AppSession, type BroadcastRow, type ChatRow, type IncidentRow, type SegmentRow, type SegStatus, type UPRRow,
   fmtBytes, fmtTime,
 } from "@/lib/upr-types";
 import { uploadPdf, viewPdf, downloadPdf } from "@/lib/upr-storage";
+import { ScheduleTrialBlock, IncidentForm, TrialCalendar, IncidentList, RegulatorView } from "@/components/TrialAndIncidents";
 
 export const Route = createFileRoute("/")({
   ssr: false,
@@ -105,24 +106,26 @@ function UPRApp({ session }: { session: AppSession }) {
   const [segments, setSegments] = useState<SegmentRow[]>([]);
   const [chat, setChat] = useState<ChatRow[]>([]);
   const [broadcasts, setBroadcasts] = useState<BroadcastRow[]>([]);
+  const [incidents, setIncidents] = useState<IncidentRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    const [u, s, c, b] = await Promise.all([
+    const [u, s, c, b, i] = await Promise.all([
       supabase.from("uprs").select("*").order("created_at", { ascending: false }),
       supabase.from("segments").select("*").order("order_idx"),
       supabase.from("chat_messages").select("*").order("created_at"),
       supabase.from("broadcasts").select("*").order("created_at", { ascending: false }),
+      supabase.from("incidents" as any).select("*").order("created_at", { ascending: false }),
     ]);
     if (u.data) setUprs(u.data as any);
     if (s.data) setSegments(s.data as any);
     if (c.data) setChat(c.data as any);
     if (b.data) setBroadcasts(b.data as any);
+    if (i.data) setIncidents(i.data as any);
   }, []);
 
   useEffect(() => { refetch(); }, [refetch]);
 
-  // Realtime
   useEffect(() => {
     const ch = supabase
       .channel("upr-live")
@@ -130,6 +133,7 @@ function UPRApp({ session }: { session: AppSession }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "segments" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "broadcasts" }, () => refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "incidents" }, () => refetch())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [refetch]);
@@ -156,7 +160,8 @@ function UPRApp({ session }: { session: AppSession }) {
             active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
         )}
-        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} />}
+        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} incidents={incidents} />}
+        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} incidents={incidents} broadcasts={broadcasts} session={session} />}
       </div>
     </div>
   );
@@ -166,10 +171,12 @@ function TopBar({ session }: { session: AppSession }) {
   const label =
     session.role === "airline" ? `${session.scope} · Dispatcher` :
     session.role === "ansp" ? `${session.scope} ${FIRS.find((f) => f.code === session.scope)?.name ?? ""} · Controller` :
+    session.role === "regulator" ? `${session.scope} · Regulator` :
     "Admin · Oversight";
   const color =
     session.role === "airline" ? "from-sky-500 to-cyan-500" :
     session.role === "ansp" ? "from-amber-500 to-orange-500" :
+    session.role === "regulator" ? "from-indigo-500 to-violet-500" :
     "from-fuchsia-500 to-pink-500";
   return (
     <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
@@ -301,7 +308,10 @@ function AirlineView({ session, uprs, segments, broadcasts, activeId, setActiveI
           <>
             <UPRHeader upr={active} />
             <SegmentMatrix segs={activeSegments} />
+            <ScheduleTrialBlock upr={active} segs={activeSegments} />
             <AirlineSegmentList upr={active} segs={activeSegments} session={session} />
+            <IncidentForm upr={active} session={session} />
+            <TrialCalendar uprs={uprs} segments={segments} title={`${session.scope} trial calendar`} filter={{ type: "airline", code: session.scope! }} />
           </>
         ) : <EmptyCard text="Create or select a UPR request to begin." />}
       </main>
@@ -676,6 +686,8 @@ function ANSPView({ session, uprs, segments, broadcasts, activeId, setActiveId, 
             <UPRHeader upr={active} />
             <SegmentMatrix segs={activeSegments} />
             <ANSPDecisionPanel upr={active} seg={mySeg} fir={fir} session={session} />
+            <IncidentForm upr={active} session={session} />
+            <TrialCalendar uprs={uprs} segments={segments} title={`${fir} trial calendar`} filter={{ type: "fir", code: fir }} />
           </>
         ) : <EmptyCard text={`No active request for ${fir}.`} />}
       </main>
@@ -891,7 +903,7 @@ function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; s
 }
 
 // ─────────── Admin view: approvals + analytics ───────────
-function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[] }) {
+function AdminView({ session, uprs, segments, incidents }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[] }) {
   type PendingRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
   const [pending, setPending] = useState<PendingRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -904,7 +916,7 @@ function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPR
 
   const approve = async (p: PendingRow) => {
     setBusy(p.id);
-    const role = (p.requested_role ?? "airline") as "airline" | "ansp" | "admin";
+    const role = (p.requested_role ?? "airline") as "airline" | "ansp" | "admin" | "regulator";
     const scope = p.requested_scope;
     const { error } = await supabase.rpc("approve_user", { _user_id: p.id, _role: role, _scope: scope ?? "" });
     if (error) alert(error.message);
@@ -975,7 +987,9 @@ function AdminView({ session, uprs, segments }: { session: AppSession; uprs: UPR
           </div>
         ))}
       </div>
+      <TrialCalendar uprs={uprs} segments={segments} title="Aggregated trial calendar" filter={{ type: "all" }} />
       <AdminUprActivity uprs={uprs} segments={segments} />
+      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="All trials across the network" />
     </div>
   );
 }
