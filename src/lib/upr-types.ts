@@ -31,6 +31,7 @@ export type UPRRow = {
   flight_plan_path: string | null;
   flight_plan_name: string | null;
   flight_plan_size: number | null;
+  trial_at: string | null;
   created_at: string;
 };
 
