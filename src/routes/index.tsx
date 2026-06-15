@@ -308,7 +308,10 @@ function AirlineView({ session, uprs, segments, broadcasts, activeId, setActiveI
           <>
             <UPRHeader upr={active} />
             <SegmentMatrix segs={activeSegments} />
+            <ScheduleTrialBlock upr={active} segs={activeSegments} />
             <AirlineSegmentList upr={active} segs={activeSegments} session={session} />
+            <IncidentForm upr={active} session={session} />
+            <TrialCalendar uprs={uprs} segments={segments} title={`${session.scope} trial calendar`} filter={{ type: "airline", code: session.scope! }} />
           </>
         ) : <EmptyCard text="Create or select a UPR request to begin." />}
       </main>
