@@ -920,7 +920,7 @@ function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; s
 }
 
 // ─────────── Admin view: approvals + analytics ───────────
-function AdminView({ session, uprs, segments, incidents }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[] }) {
+function AdminView({ session, uprs, segments, incidents, schedules, reports }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[]; schedules: TrialScheduleRow[]; reports: FlightReportRow[] }) {
   type PendingRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
   const [pending, setPending] = useState<PendingRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
