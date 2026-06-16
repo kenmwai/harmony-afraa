@@ -142,6 +142,104 @@ export type Database = {
         }
         Relationships: []
       }
+      flight_reports: {
+        Row: {
+          author: string | null
+          author_label: string
+          base_route: string
+          block_off: string | null
+          block_on: string | null
+          cost_savings_usd: number
+          created_at: string
+          flight_date: string | null
+          id: string
+          image_paths: string[]
+          incident_description: string
+          incident_rating: number | null
+          incident_severity: string
+          landing: string | null
+          notes: string
+          party: string
+          party_scope: string
+          projected_co2_kg: number
+          projected_fuel_kg: number
+          projected_time_min: number
+          realised_co2_kg: number
+          realised_fuel_kg: number
+          realised_time_min: number
+          takeoff: string | null
+          trial_stage: string
+          upr_id: string
+          upr_route: string
+        }
+        Insert: {
+          author?: string | null
+          author_label: string
+          base_route?: string
+          block_off?: string | null
+          block_on?: string | null
+          cost_savings_usd?: number
+          created_at?: string
+          flight_date?: string | null
+          id?: string
+          image_paths?: string[]
+          incident_description?: string
+          incident_rating?: number | null
+          incident_severity?: string
+          landing?: string | null
+          notes?: string
+          party: string
+          party_scope?: string
+          projected_co2_kg?: number
+          projected_fuel_kg?: number
+          projected_time_min?: number
+          realised_co2_kg?: number
+          realised_fuel_kg?: number
+          realised_time_min?: number
+          takeoff?: string | null
+          trial_stage?: string
+          upr_id: string
+          upr_route?: string
+        }
+        Update: {
+          author?: string | null
+          author_label?: string
+          base_route?: string
+          block_off?: string | null
+          block_on?: string | null
+          cost_savings_usd?: number
+          created_at?: string
+          flight_date?: string | null
+          id?: string
+          image_paths?: string[]
+          incident_description?: string
+          incident_rating?: number | null
+          incident_severity?: string
+          landing?: string | null
+          notes?: string
+          party?: string
+          party_scope?: string
+          projected_co2_kg?: number
+          projected_fuel_kg?: number
+          projected_time_min?: number
+          realised_co2_kg?: number
+          realised_fuel_kg?: number
+          realised_time_min?: number
+          takeoff?: string | null
+          trial_stage?: string
+          upr_id?: string
+          upr_route?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "flight_reports_upr_id_fkey"
+            columns: ["upr_id"]
+            isOneToOne: false
+            referencedRelation: "uprs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       incidents: {
         Row: {
           author: string
@@ -284,6 +382,47 @@ export type Database = {
           },
           {
             foreignKeyName: "segments_upr_id_fkey"
+            columns: ["upr_id"]
+            isOneToOne: false
+            referencedRelation: "uprs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      trial_schedules: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          end_at: string
+          id: string
+          notes: string
+          stage: string
+          start_at: string
+          upr_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          end_at: string
+          id?: string
+          notes?: string
+          stage: string
+          start_at: string
+          upr_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          end_at?: string
+          id?: string
+          notes?: string
+          stage?: string
+          start_at?: string
+          upr_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trial_schedules_upr_id_fkey"
             columns: ["upr_id"]
             isOneToOne: false
             referencedRelation: "uprs"
