@@ -4,10 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   FIRS, REJECT_REASONS, STATUS_META,
   type AppSession, type BroadcastRow, type ChatRow, type IncidentRow, type SegmentRow, type SegStatus, type UPRRow,
+  type TrialScheduleRow, type FlightReportRow,
   fmtBytes, fmtTime,
 } from "@/lib/upr-types";
 import { uploadPdf, viewPdf, downloadPdf } from "@/lib/upr-storage";
-import { ScheduleTrialBlock, IncidentForm, TrialCalendar, IncidentList, RegulatorView } from "@/components/TrialAndIncidents";
+import { IncidentList, RegulatorView } from "@/components/TrialAndIncidents";
+import { ScheduleProgressiveTrial, StagedTrialCalendar, FlightReportForm, FlightReportsList } from "@/components/FlightReports";
 
 export const Route = createFileRoute("/")({
   ssr: false,
@@ -107,21 +109,27 @@ function UPRApp({ session }: { session: AppSession }) {
   const [chat, setChat] = useState<ChatRow[]>([]);
   const [broadcasts, setBroadcasts] = useState<BroadcastRow[]>([]);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
+  const [schedules, setSchedules] = useState<TrialScheduleRow[]>([]);
+  const [reports, setReports] = useState<FlightReportRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    const [u, s, c, b, i] = await Promise.all([
+    const [u, s, c, b, i, sc, fr] = await Promise.all([
       supabase.from("uprs").select("*").order("created_at", { ascending: false }),
       supabase.from("segments").select("*").order("order_idx"),
       supabase.from("chat_messages").select("*").order("created_at"),
       supabase.from("broadcasts").select("*").order("created_at", { ascending: false }),
       supabase.from("incidents" as any).select("*").order("created_at", { ascending: false }),
+      supabase.from("trial_schedules" as any).select("*").order("start_at"),
+      supabase.from("flight_reports" as any).select("*").order("created_at", { ascending: false }),
     ]);
     if (u.data) setUprs(u.data as any);
     if (s.data) setSegments(s.data as any);
     if (c.data) setChat(c.data as any);
     if (b.data) setBroadcasts(b.data as any);
     if (i.data) setIncidents(i.data as any);
+    if (sc.data) setSchedules(sc.data as any);
+    if (fr.data) setReports(fr.data as any);
   }, []);
 
   useEffect(() => { refetch(); }, [refetch]);
@@ -134,6 +142,8 @@ function UPRApp({ session }: { session: AppSession }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "broadcasts" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "incidents" }, () => refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "trial_schedules" }, () => refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "flight_reports" }, () => refetch())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [refetch]);
@@ -149,6 +159,7 @@ function UPRApp({ session }: { session: AppSession }) {
         {session.role === "airline" && (
           <AirlineView
             session={session} uprs={uprs} segments={segments} broadcasts={broadcasts}
+            schedules={schedules} reports={reports}
             activeId={activeId} setActiveId={setActiveId}
             active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
@@ -156,12 +167,13 @@ function UPRApp({ session }: { session: AppSession }) {
         {session.role === "ansp" && (
           <ANSPView
             session={session} uprs={uprs} segments={segments} broadcasts={broadcasts}
+            schedules={schedules} reports={reports}
             activeId={activeId} setActiveId={setActiveId}
             active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
         )}
-        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} incidents={incidents} />}
-        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} incidents={incidents} broadcasts={broadcasts} session={session} />}
+        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} incidents={incidents} schedules={schedules} reports={reports} />}
+        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} incidents={incidents} broadcasts={broadcasts} session={session} schedules={schedules} reports={reports} />}
       </div>
     </div>
   );
@@ -285,13 +297,15 @@ function PdfBadge({ path, name, size, label }: { path: string; name: string; siz
 }
 
 // ─────────── Airline view ───────────
-function AirlineView({ session, uprs, segments, broadcasts, activeId, setActiveId, active, activeSegments, activeChat }: {
+function AirlineView({ session, uprs, segments, broadcasts, schedules, reports, activeId, setActiveId, active, activeSegments, activeChat }: {
   session: AppSession;
   uprs: UPRRow[]; segments: SegmentRow[]; broadcasts: BroadcastRow[];
+  schedules: TrialScheduleRow[]; reports: FlightReportRow[];
   activeId: string | null; setActiveId: (id: string | null) => void;
   active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[];
 }) {
   const myUprs = useMemo(() => uprs.filter((u) => u.airline_code === session.scope), [uprs, session.scope]);
+  const myReports = useMemo(() => reports.filter((r) => myUprs.some((u) => u.id === r.upr_id)), [reports, myUprs]);
   useEffect(() => {
     if (!myUprs.length) { if (activeId) setActiveId(null); return; }
     if (!myUprs.find((u) => u.id === activeId)) setActiveId(myUprs[0].id);
@@ -308,10 +322,11 @@ function AirlineView({ session, uprs, segments, broadcasts, activeId, setActiveI
           <>
             <UPRHeader upr={active} />
             <SegmentMatrix segs={activeSegments} />
-            <ScheduleTrialBlock upr={active} segs={activeSegments} />
+            <ScheduleProgressiveTrial upr={active} segs={activeSegments} schedules={schedules} />
             <AirlineSegmentList upr={active} segs={activeSegments} session={session} />
-            <IncidentForm upr={active} session={session} />
-            <TrialCalendar uprs={uprs} segments={segments} title={`${session.scope} trial calendar`} filter={{ type: "airline", code: session.scope! }} />
+            <FlightReportForm upr={active} session={session} schedules={schedules} />
+            <StagedTrialCalendar uprs={uprs} segments={segments} schedules={schedules} title={`${session.scope} trial calendar`} filter={{ type: "airline", code: session.scope! }} />
+            <FlightReportsList uprs={myUprs} reports={myReports} schedules={schedules} scopeLabel={`${session.scope} flights`} showAggregateButton={false} />
           </>
         ) : <EmptyCard text="Create or select a UPR request to begin." />}
       </main>
@@ -633,9 +648,10 @@ function AirlineSegmentRow({ upr, seg, session }: { upr: UPRRow; seg: SegmentRow
 }
 
 // ─────────── ANSP view ───────────
-function ANSPView({ session, uprs, segments, broadcasts, activeId, setActiveId, active, activeSegments, activeChat }: {
+function ANSPView({ session, uprs, segments, broadcasts, schedules, reports, activeId, setActiveId, active, activeSegments, activeChat }: {
   session: AppSession;
   uprs: UPRRow[]; segments: SegmentRow[]; broadcasts: BroadcastRow[];
+  schedules: TrialScheduleRow[]; reports: FlightReportRow[];
   activeId: string | null; setActiveId: (id: string | null) => void;
   active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[];
 }) {
@@ -686,8 +702,9 @@ function ANSPView({ session, uprs, segments, broadcasts, activeId, setActiveId, 
             <UPRHeader upr={active} />
             <SegmentMatrix segs={activeSegments} />
             <ANSPDecisionPanel upr={active} seg={mySeg} fir={fir} session={session} />
-            <IncidentForm upr={active} session={session} />
-            <TrialCalendar uprs={uprs} segments={segments} title={`${fir} trial calendar`} filter={{ type: "fir", code: fir }} />
+            <FlightReportForm upr={active} session={session} schedules={schedules} />
+            <StagedTrialCalendar uprs={uprs} segments={segments} schedules={schedules} title={`${fir} trial calendar`} filter={{ type: "fir", code: fir }} />
+            <FlightReportsList uprs={uprs} reports={reports.filter((r) => segments.some((s) => s.upr_id === r.upr_id && s.fir_code === fir))} schedules={schedules} scopeLabel={`Flights touching ${fir}`} showAggregateButton={false} />
           </>
         ) : <EmptyCard text={`No active request for ${fir}.`} />}
       </main>
@@ -903,7 +920,7 @@ function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; s
 }
 
 // ─────────── Admin view: approvals + analytics ───────────
-function AdminView({ session, uprs, segments, incidents }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[] }) {
+function AdminView({ session, uprs, segments, incidents, schedules, reports }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[]; schedules: TrialScheduleRow[]; reports: FlightReportRow[] }) {
   type PendingRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
   const [pending, setPending] = useState<PendingRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -987,9 +1004,10 @@ function AdminView({ session, uprs, segments, incidents }: { session: AppSession
           </div>
         ))}
       </div>
-      <TrialCalendar uprs={uprs} segments={segments} title="Aggregated trial calendar" filter={{ type: "all" }} />
+      <StagedTrialCalendar uprs={uprs} segments={segments} schedules={schedules} title="Aggregated trial calendar (all stages)" filter={{ type: "all" }} />
       <AdminUprActivity uprs={uprs} segments={segments} />
-      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="All trials across the network" />
+      <FlightReportsList uprs={uprs} reports={reports} schedules={schedules} scopeLabel="All trials across the network" />
+      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="Legacy incident feedback (pre-template)" />
     </div>
   );
 }

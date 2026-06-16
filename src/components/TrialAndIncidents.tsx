@@ -4,9 +4,11 @@ import {
   FIRS, STATUS_META,
   type AppSession, type IncidentRow, type IncidentSeverity,
   type SegmentRow, type UPRRow,
+  type TrialScheduleRow, type FlightReportRow,
 } from "@/lib/upr-types";
 import { uploadIncidentImage, getImageUrl } from "@/lib/upr-storage";
 import { jsPDF } from "jspdf";
+import { StagedTrialCalendar, FlightReportsList } from "@/components/FlightReports";
 
 // ─────────── helpers ───────────
 
@@ -407,10 +409,11 @@ async function exportIncidentReport(upr: UPRRow, rows: IncidentRow[]) {
 // ─────────── Regulator / Observer view (read-only) ───────────
 
 export function RegulatorView({
-  uprs, segments, incidents, broadcasts, session,
+  uprs, segments, incidents, broadcasts, session, schedules, reports,
 }: {
   uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[];
   broadcasts: any[]; session: AppSession;
+  schedules: TrialScheduleRow[]; reports: FlightReportRow[];
 }) {
   const [text, setText] = useState("");
   const [sev, setSev] = useState<"info" | "warn" | "critical">("info");
@@ -453,11 +456,12 @@ export function RegulatorView({
         ))}
       </div>
 
-      <TrialCalendar uprs={uprs} segments={segments} title="Aggregated trial calendar (all airlines & FIRs)" filter={{ type: "all" }} />
+      <StagedTrialCalendar uprs={uprs} segments={segments} schedules={schedules} title="Aggregated trial calendar (all stages, all airlines & FIRs)" filter={{ type: "all" }} />
 
       <ReadonlyUprActivity uprs={uprs} segments={segments} />
 
-      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="All trials across the network" />
+      <FlightReportsList uprs={uprs} reports={reports} schedules={schedules} scopeLabel="All trial flights across the network" />
+      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="Legacy incident feedback (pre-template)" />
 
       <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
         <div className="text-sm font-semibold mb-2">Issue broadcast notice</div>
