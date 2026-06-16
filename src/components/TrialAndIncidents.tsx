@@ -409,10 +409,11 @@ async function exportIncidentReport(upr: UPRRow, rows: IncidentRow[]) {
 // ─────────── Regulator / Observer view (read-only) ───────────
 
 export function RegulatorView({
-  uprs, segments, incidents, broadcasts, session,
+  uprs, segments, incidents, broadcasts, session, schedules, reports,
 }: {
   uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[];
   broadcasts: any[]; session: AppSession;
+  schedules: TrialScheduleRow[]; reports: FlightReportRow[];
 }) {
   const [text, setText] = useState("");
   const [sev, setSev] = useState<"info" | "warn" | "critical">("info");
