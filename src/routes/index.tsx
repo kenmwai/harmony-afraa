@@ -1004,9 +1004,10 @@ function AdminView({ session, uprs, segments, incidents, schedules, reports }: {
           </div>
         ))}
       </div>
-      <TrialCalendar uprs={uprs} segments={segments} title="Aggregated trial calendar" filter={{ type: "all" }} />
+      <StagedTrialCalendar uprs={uprs} segments={segments} schedules={schedules} title="Aggregated trial calendar (all stages)" filter={{ type: "all" }} />
       <AdminUprActivity uprs={uprs} segments={segments} />
-      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="All trials across the network" />
+      <FlightReportsList uprs={uprs} reports={reports} schedules={schedules} scopeLabel="All trials across the network" />
+      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="Legacy incident feedback (pre-template)" />
     </div>
   );
 }
