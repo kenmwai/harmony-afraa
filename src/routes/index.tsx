@@ -648,9 +648,10 @@ function AirlineSegmentRow({ upr, seg, session }: { upr: UPRRow; seg: SegmentRow
 }
 
 // ─────────── ANSP view ───────────
-function ANSPView({ session, uprs, segments, broadcasts, activeId, setActiveId, active, activeSegments, activeChat }: {
+function ANSPView({ session, uprs, segments, broadcasts, schedules, reports, activeId, setActiveId, active, activeSegments, activeChat }: {
   session: AppSession;
   uprs: UPRRow[]; segments: SegmentRow[]; broadcasts: BroadcastRow[];
+  schedules: TrialScheduleRow[]; reports: FlightReportRow[];
   activeId: string | null; setActiveId: (id: string | null) => void;
   active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[];
 }) {
