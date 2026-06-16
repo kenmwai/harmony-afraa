@@ -297,13 +297,15 @@ function PdfBadge({ path, name, size, label }: { path: string; name: string; siz
 }
 
 // ─────────── Airline view ───────────
-function AirlineView({ session, uprs, segments, broadcasts, activeId, setActiveId, active, activeSegments, activeChat }: {
+function AirlineView({ session, uprs, segments, broadcasts, schedules, reports, activeId, setActiveId, active, activeSegments, activeChat }: {
   session: AppSession;
   uprs: UPRRow[]; segments: SegmentRow[]; broadcasts: BroadcastRow[];
+  schedules: TrialScheduleRow[]; reports: FlightReportRow[];
   activeId: string | null; setActiveId: (id: string | null) => void;
   active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[];
 }) {
   const myUprs = useMemo(() => uprs.filter((u) => u.airline_code === session.scope), [uprs, session.scope]);
+  const myReports = useMemo(() => reports.filter((r) => myUprs.some((u) => u.id === r.upr_id)), [reports, myUprs]);
   useEffect(() => {
     if (!myUprs.length) { if (activeId) setActiveId(null); return; }
     if (!myUprs.find((u) => u.id === activeId)) setActiveId(myUprs[0].id);
@@ -320,10 +322,11 @@ function AirlineView({ session, uprs, segments, broadcasts, activeId, setActiveI
           <>
             <UPRHeader upr={active} />
             <SegmentMatrix segs={activeSegments} />
-            <ScheduleTrialBlock upr={active} segs={activeSegments} />
+            <ScheduleProgressiveTrial upr={active} segs={activeSegments} schedules={schedules} />
             <AirlineSegmentList upr={active} segs={activeSegments} session={session} />
-            <IncidentForm upr={active} session={session} />
-            <TrialCalendar uprs={uprs} segments={segments} title={`${session.scope} trial calendar`} filter={{ type: "airline", code: session.scope! }} />
+            <FlightReportForm upr={active} session={session} schedules={schedules} />
+            <StagedTrialCalendar uprs={uprs} segments={segments} schedules={schedules} title={`${session.scope} trial calendar`} filter={{ type: "airline", code: session.scope! }} />
+            <FlightReportsList uprs={myUprs} reports={myReports} schedules={schedules} scopeLabel={`${session.scope} flights`} showAggregateButton={false} />
           </>
         ) : <EmptyCard text="Create or select a UPR request to begin." />}
       </main>
