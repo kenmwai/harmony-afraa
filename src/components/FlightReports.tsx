@@ -7,7 +7,13 @@ import {
 } from "@/lib/upr-types";
 import { uploadIncidentImage, getImageUrl } from "@/lib/upr-storage";
 import { jsPDF } from "jspdf";
-import { computeVerdict } from "@/components/TrialAndIncidents";
+
+function computeVerdict(segs: SegmentRow[]): "PENDING" | "APPROVED" | "REJECTED" {
+  if (!segs.length) return "PENDING";
+  if (segs.some((s) => s.status === "rejected")) return "REJECTED";
+  if (segs.every((s) => s.status === "approved")) return "APPROVED";
+  return "PENDING";
+}
 
 const SEV_META: Record<IncidentSeverity, { color: string; label: string }> = {
   none: { color: "bg-emerald-500/20 text-emerald-300 ring-emerald-500/40", label: "No incident" },
