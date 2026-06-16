@@ -109,21 +109,27 @@ function UPRApp({ session }: { session: AppSession }) {
   const [chat, setChat] = useState<ChatRow[]>([]);
   const [broadcasts, setBroadcasts] = useState<BroadcastRow[]>([]);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
+  const [schedules, setSchedules] = useState<TrialScheduleRow[]>([]);
+  const [reports, setReports] = useState<FlightReportRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    const [u, s, c, b, i] = await Promise.all([
+    const [u, s, c, b, i, sc, fr] = await Promise.all([
       supabase.from("uprs").select("*").order("created_at", { ascending: false }),
       supabase.from("segments").select("*").order("order_idx"),
       supabase.from("chat_messages").select("*").order("created_at"),
       supabase.from("broadcasts").select("*").order("created_at", { ascending: false }),
       supabase.from("incidents" as any).select("*").order("created_at", { ascending: false }),
+      supabase.from("trial_schedules" as any).select("*").order("start_at"),
+      supabase.from("flight_reports" as any).select("*").order("created_at", { ascending: false }),
     ]);
     if (u.data) setUprs(u.data as any);
     if (s.data) setSegments(s.data as any);
     if (c.data) setChat(c.data as any);
     if (b.data) setBroadcasts(b.data as any);
     if (i.data) setIncidents(i.data as any);
+    if (sc.data) setSchedules(sc.data as any);
+    if (fr.data) setReports(fr.data as any);
   }, []);
 
   useEffect(() => { refetch(); }, [refetch]);
@@ -136,6 +142,8 @@ function UPRApp({ session }: { session: AppSession }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "broadcasts" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "incidents" }, () => refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "trial_schedules" }, () => refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "flight_reports" }, () => refetch())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [refetch]);
