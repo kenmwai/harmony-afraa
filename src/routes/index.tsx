@@ -702,8 +702,9 @@ function ANSPView({ session, uprs, segments, broadcasts, schedules, reports, act
             <UPRHeader upr={active} />
             <SegmentMatrix segs={activeSegments} />
             <ANSPDecisionPanel upr={active} seg={mySeg} fir={fir} session={session} />
-            <IncidentForm upr={active} session={session} />
-            <TrialCalendar uprs={uprs} segments={segments} title={`${fir} trial calendar`} filter={{ type: "fir", code: fir }} />
+            <FlightReportForm upr={active} session={session} schedules={schedules} />
+            <StagedTrialCalendar uprs={uprs} segments={segments} schedules={schedules} title={`${fir} trial calendar`} filter={{ type: "fir", code: fir }} />
+            <FlightReportsList uprs={uprs} reports={reports.filter((r) => segments.some((s) => s.upr_id === r.upr_id && s.fir_code === fir))} schedules={schedules} scopeLabel={`Flights touching ${fir}`} showAggregateButton={false} />
           </>
         ) : <EmptyCard text={`No active request for ${fir}.`} />}
       </main>
