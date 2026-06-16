@@ -4,10 +4,12 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   FIRS, REJECT_REASONS, STATUS_META,
   type AppSession, type BroadcastRow, type ChatRow, type IncidentRow, type SegmentRow, type SegStatus, type UPRRow,
+  type TrialScheduleRow, type FlightReportRow,
   fmtBytes, fmtTime,
 } from "@/lib/upr-types";
 import { uploadPdf, viewPdf, downloadPdf } from "@/lib/upr-storage";
-import { ScheduleTrialBlock, IncidentForm, TrialCalendar, IncidentList, RegulatorView } from "@/components/TrialAndIncidents";
+import { IncidentList, RegulatorView } from "@/components/TrialAndIncidents";
+import { ScheduleProgressiveTrial, StagedTrialCalendar, FlightReportForm, FlightReportsList } from "@/components/FlightReports";
 
 export const Route = createFileRoute("/")({
   ssr: false,
