@@ -4,9 +4,11 @@ import {
   FIRS, STATUS_META,
   type AppSession, type IncidentRow, type IncidentSeverity,
   type SegmentRow, type UPRRow,
+  type TrialScheduleRow, type FlightReportRow,
 } from "@/lib/upr-types";
 import { uploadIncidentImage, getImageUrl } from "@/lib/upr-storage";
 import { jsPDF } from "jspdf";
+import { StagedTrialCalendar, FlightReportsList } from "@/components/FlightReports";
 
 // ─────────── helpers ───────────
 
