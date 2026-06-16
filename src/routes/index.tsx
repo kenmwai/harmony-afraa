@@ -159,6 +159,7 @@ function UPRApp({ session }: { session: AppSession }) {
         {session.role === "airline" && (
           <AirlineView
             session={session} uprs={uprs} segments={segments} broadcasts={broadcasts}
+            schedules={schedules} reports={reports}
             activeId={activeId} setActiveId={setActiveId}
             active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
@@ -166,12 +167,13 @@ function UPRApp({ session }: { session: AppSession }) {
         {session.role === "ansp" && (
           <ANSPView
             session={session} uprs={uprs} segments={segments} broadcasts={broadcasts}
+            schedules={schedules} reports={reports}
             activeId={activeId} setActiveId={setActiveId}
             active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
         )}
-        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} incidents={incidents} />}
-        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} incidents={incidents} broadcasts={broadcasts} session={session} />}
+        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} incidents={incidents} schedules={schedules} reports={reports} />}
+        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} incidents={incidents} broadcasts={broadcasts} session={session} schedules={schedules} reports={reports} />}
       </div>
     </div>
   );
