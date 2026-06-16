@@ -1,6 +1,54 @@
 export type Role = "airline" | "ansp" | "admin" | "regulator";
 export type SegStatus = "pending" | "approved" | "amended" | "rejected";
 export type IncidentSeverity = "none" | "minor" | "major" | "critical";
+export type TrialStage = "day1" | "day3" | "day7";
+
+export const TRIAL_STAGE_META: Record<TrialStage, { label: string; days: number; color: string; bg: string; ring: string; dot: string; hex: string }> = {
+  day1: { label: "1-day trial", days: 1, color: "text-sky-100", bg: "bg-sky-500/20", ring: "ring-sky-500/40", dot: "bg-sky-400", hex: "#38bdf8" },
+  day3: { label: "3-day trial", days: 3, color: "text-amber-100", bg: "bg-amber-500/20", ring: "ring-amber-500/40", dot: "bg-amber-400", hex: "#f59e0b" },
+  day7: { label: "7-day trial", days: 7, color: "text-emerald-100", bg: "bg-emerald-500/20", ring: "ring-emerald-500/40", dot: "bg-emerald-400", hex: "#10b981" },
+};
+
+export type TrialScheduleRow = {
+  id: string;
+  upr_id: string;
+  stage: TrialStage;
+  start_at: string;
+  end_at: string;
+  notes: string;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type FlightReportRow = {
+  id: string;
+  upr_id: string;
+  author: string | null;
+  author_label: string;
+  party: "airline" | "ansp";
+  party_scope: string;
+  trial_stage: TrialStage;
+  flight_date: string | null;
+  block_off: string | null;
+  takeoff: string | null;
+  block_on: string | null;
+  landing: string | null;
+  base_route: string;
+  upr_route: string;
+  projected_time_min: number;
+  projected_fuel_kg: number;
+  projected_co2_kg: number;
+  realised_time_min: number;
+  realised_fuel_kg: number;
+  realised_co2_kg: number;
+  cost_savings_usd: number;
+  incident_rating: number | null;
+  incident_severity: IncidentSeverity;
+  incident_description: string;
+  image_paths: string[];
+  notes: string;
+  created_at: string;
+};
 
 export type IncidentRow = {
   id: string;
