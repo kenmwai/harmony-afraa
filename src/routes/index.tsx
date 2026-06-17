@@ -151,8 +151,8 @@ function UPRApp({ session }: { session: AppSession }) {
             active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
         )}
-        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} incidents={incidents} schedules={schedules} reports={reports} />}
-        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} incidents={incidents} broadcasts={broadcasts} session={session} schedules={schedules} reports={reports} />}
+        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} schedules={schedules} reports={reports} />}
+        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} broadcasts={broadcasts} session={session} schedules={schedules} reports={reports} />}
       </div>
     </div>
   );
