@@ -114,7 +114,7 @@ export function ScheduleProgressiveTrial({ upr, segs, schedules }: { upr: UPRRow
   );
 }
 
-// ─────────── Stage-colored Trial Calendar ───────────
+// ─────────── Stage-colored Trial Calendar (clickable) ───────────
 
 export function StagedTrialCalendar({
   uprs, segments, schedules, title, filter,
@@ -133,12 +133,12 @@ export function StagedTrialCalendar({
   }, [uprs, segments, schedules, filter]);
 
   const [cursor, setCursor] = useState<Date>(() => { const d = new Date(); d.setDate(1); return d; });
+  const [selected, setSelected] = useState<TrialScheduleRow | null>(null);
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  // span schedules across days
   const dayHas = (d: number) => {
     const cellStart = new Date(year, month, d).getTime();
     const cellEnd = cellStart + 86_400_000;
@@ -153,12 +153,15 @@ export function StagedTrialCalendar({
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, trials: dayHas(d) });
 
+  const selectedUpr = selected ? uprs.find((u) => u.id === selected.upr_id) ?? null : null;
+  const selectedSegs = selected ? segments.filter((s) => s.upr_id === selected.upr_id).sort((a,b) => a.order_idx - b.order_idx) : [];
+
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="text-sm font-semibold">{title}</div>
-          <div className="text-[11px] text-slate-400">{filtered.length} scheduled trial{filtered.length === 1 ? "" : "s"}</div>
+          <div className="text-[11px] text-slate-400">{filtered.length} scheduled trial{filtered.length === 1 ? "" : "s"} · click a flight for details</div>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setCursor(new Date(year, month - 1, 1))} className="text-xs px-2 py-1 rounded ring-1 ring-slate-700 hover:bg-slate-800">‹</button>
@@ -188,9 +191,9 @@ export function StagedTrialCalendar({
                     const u = uprs.find((x) => x.id === s.upr_id);
                     const m = TRIAL_STAGE_META[s.stage];
                     return (
-                      <div key={s.id} className={`${m.bg} ${m.color} ring-1 ${m.ring} rounded px-1 py-0.5 truncate`}>
+                      <button key={s.id} onClick={() => setSelected(s)} className={`${m.bg} ${m.color} ring-1 ${m.ring} rounded px-1 py-0.5 truncate w-full text-left hover:brightness-125 cursor-pointer`}>
                         <span className="font-mono">{u?.callsign ?? "—"}</span> · {m.label.split("-")[0]}
-                      </div>
+                      </button>
                     );
                   })}
                   {c.trials.length > 3 && <div className="text-slate-500">+{c.trials.length - 3}</div>}
@@ -200,9 +203,52 @@ export function StagedTrialCalendar({
           </div>
         ))}
       </div>
+
+      {selected && selectedUpr && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur grid place-items-center p-6" onClick={() => setSelected(null)}>
+          <div className="max-w-lg w-full rounded-2xl bg-slate-900 ring-1 ring-slate-700 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-slate-400">Scheduled trial flight</div>
+                <div className="text-lg font-semibold mt-0.5">{selectedUpr.callsign} <span className="text-slate-500">·</span> <span className="text-slate-300 text-sm">{selectedUpr.flight_no}</span></div>
+              </div>
+              <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-slate-100 text-xl leading-none">×</button>
+            </div>
+            <div className="flex items-center gap-2 mb-3">
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded ring-1 text-[11px] ${TRIAL_STAGE_META[selected.stage].bg} ${TRIAL_STAGE_META[selected.stage].color} ${TRIAL_STAGE_META[selected.stage].ring}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${TRIAL_STAGE_META[selected.stage].dot}`} />{TRIAL_STAGE_META[selected.stage].label}
+              </span>
+              <span className="text-[11px] text-slate-400">{selectedUpr.airline_code} · {selectedUpr.aircraft}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-[12px]">
+              <Pair label="Route" value={`${selectedUpr.dep} → ${selectedUpr.arr}`} />
+              <Pair label="Duration" value={`${TRIAL_STAGE_META[selected.stage].days} day(s)`} />
+              <Pair label="Starts" value={fmtDT(selected.start_at)} />
+              <Pair label="Ends" value={fmtDT(selected.end_at)} />
+              <Pair label="Baseline" value={`${selectedUpr.baseline_minutes} min`} />
+              <Pair label="UPR" value={`${selectedUpr.optimized_minutes} min`} />
+            </div>
+            <div className="mt-3">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">FIRs traversed</div>
+              <div className="flex flex-wrap gap-1">
+                {selectedSegs.map((s) => (
+                  <span key={s.id} className="text-[11px] px-1.5 py-0.5 rounded bg-slate-800 ring-1 ring-slate-700 font-mono">
+                    {s.fir_code}
+                  </span>
+                ))}
+                {selectedSegs.length === 0 && <span className="text-[11px] text-slate-500">—</span>}
+              </div>
+            </div>
+            {selected.notes && (
+              <div className="mt-3 text-[12px] text-slate-300 bg-slate-950/40 rounded p-2">{selected.notes}</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ─────────── Flight Report Form (template) ───────────
 
@@ -586,63 +632,248 @@ function ReportImage({ path }: { path: string }) {
   );
 }
 
-// ─────────── PDF generators ───────────
+// ─────────── PDF generators (branded, professional) ───────────
+
+// Platform colors (sky-500 → emerald-500)
+const BRAND = {
+  sky: [56, 189, 248] as [number, number, number],     // #38BDF8
+  emerald: [16, 185, 129] as [number, number, number], // #10B981
+  ink: [15, 23, 42] as [number, number, number],       // slate-950
+  slate: [71, 85, 105] as [number, number, number],    // slate-600
+  mute: [148, 163, 184] as [number, number, number],   // slate-400
+  light: [241, 245, 249] as [number, number, number],  // slate-100
+  cardBg: [248, 250, 252] as [number, number, number], // slate-50
+};
+
+// Draw a 5-pointed star at (cx, cy)
+function star(doc: jsPDF, cx: number, cy: number, r: number, fill: [number, number, number]) {
+  const pts: [number, number][] = [];
+  for (let i = 0; i < 10; i++) {
+    const ang = -Math.PI / 2 + (i * Math.PI) / 5;
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    pts.push([cx + Math.cos(ang) * rad, cy + Math.sin(ang) * rad]);
+  }
+  doc.setFillColor(...fill);
+  (doc as any).lines(
+    pts.slice(1).map(([x, y], i) => [x - pts[i][0], y - pts[i][1]]),
+    pts[0][0], pts[0][1],
+    [1, 1], "F", true,
+  );
+}
+
+// Branded header band with gradient strip + stars + platform mark
+function drawHeader(doc: jsPDF, title: string, subtitle: string) {
+  const W = doc.internal.pageSize.getWidth();
+  const H = 96;
+  // Gradient: emulate a sky→emerald horizontal blend with vertical slices
+  const steps = 60;
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    const r = Math.round(BRAND.sky[0] + (BRAND.emerald[0] - BRAND.sky[0]) * t);
+    const g = Math.round(BRAND.sky[1] + (BRAND.emerald[1] - BRAND.sky[1]) * t);
+    const b = Math.round(BRAND.sky[2] + (BRAND.emerald[2] - BRAND.sky[2]) * t);
+    doc.setFillColor(r, g, b);
+    doc.rect((W / steps) * i, 0, W / steps + 0.5, H, "F");
+  }
+  // Dark ink overlay strip at bottom for readability
+  doc.setFillColor(...BRAND.ink);
+  doc.rect(0, H - 4, W, 4, "F");
+
+  // Platform mark (H tile)
+  doc.setFillColor(...BRAND.ink);
+  doc.roundedRect(36, 22, 44, 44, 8, 8, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(28);
+  doc.text("H", 49, 53);
+
+  // Star cluster on the right (decorative)
+  star(doc, W - 60, 32, 9, [255, 255, 255]);
+  star(doc, W - 36, 48, 5, [255, 255, 255]);
+  star(doc, W - 80, 58, 4, [255, 255, 255]);
+  star(doc, W - 100, 30, 3, [255, 255, 255]);
+
+  // Title block
+  doc.setTextColor(15, 23, 42);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+  doc.text("HARMONY BY AFRAA", 92, 38);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text("African User Preferred Routes · Coordination Platform", 92, 52);
+
+  // Document title under header
+  doc.setFillColor(255, 255, 255);
+  doc.setTextColor(...BRAND.ink);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(18);
+  doc.text(title, 40, H + 32);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+  doc.setTextColor(...BRAND.slate);
+  doc.text(subtitle, 40, H + 50);
+  doc.setTextColor(0, 0, 0);
+
+  // Divider
+  doc.setDrawColor(...BRAND.mute);
+  doc.setLineWidth(0.5);
+  doc.line(40, H + 60, W - 40, H + 60);
+}
+
+function drawFooter(doc: jsPDF) {
+  const W = doc.internal.pageSize.getWidth();
+  const Hp = doc.internal.pageSize.getHeight();
+  // Gradient strip
+  const steps = 40;
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    const r = Math.round(BRAND.sky[0] + (BRAND.emerald[0] - BRAND.sky[0]) * t);
+    const g = Math.round(BRAND.sky[1] + (BRAND.emerald[1] - BRAND.sky[1]) * t);
+    const b = Math.round(BRAND.sky[2] + (BRAND.emerald[2] - BRAND.sky[2]) * t);
+    doc.setFillColor(r, g, b);
+    doc.rect((W / steps) * i, Hp - 18, W / steps + 0.5, 4, "F");
+  }
+  doc.setTextColor(...BRAND.mute);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+  const page = (doc as any).internal.getCurrentPageInfo().pageNumber;
+  doc.text(`Harmony by AFRAA · ${new Date().toLocaleDateString("en-GB")}`, 40, Hp - 6);
+  doc.text(`Page ${page}`, W - 60, Hp - 6);
+  doc.setTextColor(0, 0, 0);
+}
+
+function ensureSpace(doc: jsPDF, y: number, need: number): number {
+  const Hp = doc.internal.pageSize.getHeight();
+  if (y + need > Hp - 40) {
+    drawFooter(doc);
+    doc.addPage();
+    drawHeader(doc, "Harmony by AFRAA — continued", "");
+    return 180;
+  }
+  return y;
+}
+
+function ratingStars(doc: jsPDF, x: number, y: number, n: number) {
+  for (let i = 0; i < 5; i++) {
+    const filled = i < n;
+    star(doc, x + i * 12, y, 4.5, filled ? [245, 158, 11] : [226, 232, 240]);
+  }
+}
+
+function sectionTitle(doc: jsPDF, title: string, x: number, y: number) {
+  // colored bullet
+  doc.setFillColor(...BRAND.sky);
+  doc.rect(x, y - 9, 3, 11, "F");
+  doc.setTextColor(...BRAND.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(12);
+  doc.text(title, x + 9, y);
+  doc.setTextColor(0, 0, 0);
+}
+
+function statCard(doc: jsPDF, x: number, y: number, w: number, label: string, value: string) {
+  doc.setFillColor(...BRAND.cardBg);
+  doc.roundedRect(x, y, w, 42, 4, 4, "F");
+  doc.setDrawColor(...BRAND.mute);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(x, y, w, 42, 4, 4, "S");
+  doc.setTextColor(...BRAND.slate); doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+  doc.text(label.toUpperCase(), x + 8, y + 14);
+  doc.setTextColor(...BRAND.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+  doc.text(value, x + 8, y + 32);
+  doc.setTextColor(0, 0, 0);
+}
 
 async function exportFlightReport(upr: UPRRow, rows: FlightReportRow[]) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
-  let y = 56;
 
-  doc.setFontSize(18); doc.setFont("helvetica", "bold");
-  doc.text("Harmony by AFRAA — Trial Flight Report", 40, y); y += 22;
-  doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(120);
-  doc.text(`Generated ${new Date().toLocaleString("en-GB")}`, 40, y); y += 18;
-  doc.setTextColor(0);
+  drawHeader(doc, "Trial Flight Report", `${upr.callsign} · ${upr.flight_no} · Generated ${new Date().toLocaleString("en-GB")}`);
+  let y = 180;
 
-  doc.setFontSize(12); doc.setFont("helvetica", "bold");
-  doc.text(`${upr.callsign}  (${upr.flight_no})`, 40, y); y += 16;
-  doc.setFont("helvetica", "normal"); doc.setFontSize(10);
-  doc.text(`Airline: ${upr.airline_code}    Route: ${upr.dep} → ${upr.arr}    Aircraft: ${upr.aircraft}`, 40, y); y += 14;
-  doc.text(`Burn rate: ${upr.burn_kg_per_min} kg/min    Submissions: ${rows.length}`, 40, y); y += 18;
+  // Flight summary card
+  doc.setFillColor(...BRAND.cardBg);
+  doc.roundedRect(40, y, W - 80, 70, 6, 6, "F");
+  doc.setDrawColor(...BRAND.mute); doc.setLineWidth(0.3);
+  doc.roundedRect(40, y, W - 80, 70, 6, 6, "S");
+  doc.setTextColor(...BRAND.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+  doc.text(`${upr.callsign}  ·  ${upr.flight_no}`, 52, y + 22);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(...BRAND.slate);
+  doc.text(`Airline ${upr.airline_code}    Route ${upr.dep} → ${upr.arr}    Aircraft ${upr.aircraft}`, 52, y + 40);
+  doc.text(`Burn rate ${upr.burn_kg_per_min} kg/min    Submissions ${rows.length}`, 52, y + 56);
+  doc.setTextColor(0, 0, 0);
+  y += 90;
+
+  // Aggregate savings
+  const tot = rows.reduce((a, r) => ({
+    time: a.time + Number(r.realised_time_min || 0),
+    fuel: a.fuel + Number(r.realised_fuel_kg || 0),
+    co2: a.co2 + Number(r.realised_co2_kg || 0),
+    usd: a.usd + Number(r.cost_savings_usd || 0),
+  }), { time: 0, fuel: 0, co2: 0, usd: 0 });
+  const cardW = (W - 80 - 18) / 4;
+  statCard(doc, 40, y, cardW, "Time saved", `${tot.time.toFixed(0)} min`);
+  statCard(doc, 40 + cardW + 6, y, cardW, "Fuel saved", `${tot.fuel.toFixed(0)} kg`);
+  statCard(doc, 40 + (cardW + 6) * 2, y, cardW, "CO2 avoided", `${tot.co2.toFixed(0)} kg`);
+  statCard(doc, 40 + (cardW + 6) * 3, y, cardW, "Cost saved", `$${tot.usd.toFixed(0)}`);
+  y += 60;
+
+  sectionTitle(doc, "Submitted reports", 40, y); y += 18;
 
   for (const r of rows) {
-    if (y > 720) { doc.addPage(); y = 56; }
-    doc.setDrawColor(220); doc.line(40, y, W - 40, y); y += 12;
-    doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-    doc.text(`${TRIAL_STAGE_META[r.trial_stage].label} · ${r.party.toUpperCase()} · ${r.author_label}`, 40, y); y += 14;
-    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-    doc.text(`Flight date: ${fmtD(r.flight_date)}    Submitted: ${fmtDT(r.created_at)}`, 40, y); y += 12;
-    doc.text(`Block-off: ${fmtDT(r.block_off)}    Takeoff: ${fmtDT(r.takeoff)}`, 40, y); y += 12;
-    doc.text(`Block-on:  ${fmtDT(r.block_on)}    Landing: ${fmtDT(r.landing)}`, 40, y); y += 12;
-    if (r.base_route) { doc.text(`Base route: ${r.base_route}`, 40, y); y += 12; }
-    if (r.upr_route) { doc.text(`UPR route:  ${r.upr_route}`, 40, y); y += 12; }
-    doc.setFont("helvetica", "bold"); doc.text("Savings — projected → realised", 40, y); y += 12;
+    y = ensureSpace(doc, y, 150);
+    // card
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...BRAND.mute); doc.setLineWidth(0.4);
+    doc.roundedRect(40, y, W - 80, 130, 6, 6, "S");
+
+    // Stage chip
+    const m = TRIAL_STAGE_META[r.trial_stage];
+    const stageHex = m.hex;
+    const rgb: [number, number, number] = stageHex === "#38bdf8" ? BRAND.sky : stageHex === "#10b981" ? BRAND.emerald : [245, 158, 11];
+    doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+    doc.roundedRect(52, y + 12, 78, 16, 3, 3, "F");
+    doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+    doc.text(m.label.toUpperCase(), 56, y + 23);
+
+    // Party + author
+    doc.setTextColor(...BRAND.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text(`${r.party.toUpperCase()} · ${r.author_label}`, 140, y + 24);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...BRAND.slate);
+    doc.text(`Submitted ${fmtDT(r.created_at)}`, 140, y + 36);
+
+    // Stars
+    if (r.incident_rating) ratingStars(doc, W - 130, y + 22, r.incident_rating);
+
+    // Times
+    doc.setTextColor(...BRAND.ink); doc.setFontSize(9); doc.setFont("helvetica", "normal");
+    doc.text(`Flight date: ${fmtD(r.flight_date)}`, 52, y + 54);
+    doc.text(`Block-off: ${fmtDT(r.block_off)}   Takeoff: ${fmtDT(r.takeoff)}`, 52, y + 66);
+    doc.text(`Block-on:  ${fmtDT(r.block_on)}   Landing: ${fmtDT(r.landing)}`, 52, y + 78);
+
+    // Savings line
+    doc.setFont("helvetica", "bold"); doc.setTextColor(...BRAND.ink);
+    doc.text("Realised savings:", 52, y + 96);
     doc.setFont("helvetica", "normal");
-    doc.text(`Time:  ${Number(r.projected_time_min).toFixed(0)} → ${Number(r.realised_time_min).toFixed(0)} min`, 40, y); y += 11;
-    doc.text(`Fuel:  ${Number(r.projected_fuel_kg).toFixed(0)} → ${Number(r.realised_fuel_kg).toFixed(0)} kg`, 40, y); y += 11;
-    doc.text(`CO\u2082:   ${Number(r.projected_co2_kg).toFixed(0)} → ${Number(r.realised_co2_kg).toFixed(0)} kg`, 40, y); y += 11;
-    doc.text(`Cost saved: $${Number(r.cost_savings_usd).toFixed(2)}`, 40, y); y += 14;
-    doc.text(`Incident: ${r.incident_severity}   Rating: ${r.incident_rating ?? "—"}/5`, 40, y); y += 12;
+    doc.text(`${Number(r.realised_time_min).toFixed(0)} min  ·  ${Number(r.realised_fuel_kg).toFixed(0)} kg fuel  ·  ${Number(r.realised_co2_kg).toFixed(0)} kg CO2  ·  $${Number(r.cost_savings_usd).toFixed(0)}`, 150, y + 96);
+
+    // Severity
+    doc.setFont("helvetica", "bold"); doc.text("Incident:", 52, y + 110);
+    doc.setFont("helvetica", "normal");
+    doc.text(`${r.incident_severity}  ·  Rating ${r.incident_rating ?? "—"}/5  ·  ${r.image_paths.length} image(s)`, 100, y + 110);
+
+    y += 144;
+
     if (r.incident_description) {
-      const lines = doc.splitTextToSize(r.incident_description, W - 80) as string[];
-      for (const l of lines) { if (y > 770) { doc.addPage(); y = 56; } doc.text(l, 40, y); y += 11; }
+      const lines = doc.splitTextToSize(r.incident_description, W - 100) as string[];
+      for (const l of lines) { y = ensureSpace(doc, y, 12); doc.setFontSize(9); doc.text(l, 52, y); y += 12; }
+      y += 6;
     }
-    if (r.image_paths.length) { doc.setTextColor(80, 80, 200); doc.text(`Attachments: ${r.image_paths.length} image(s)`, 40, y); y += 12; doc.setTextColor(0); }
-    y += 8;
   }
-  doc.save(`flight-report-${upr.callsign}.pdf`);
+
+  drawFooter(doc);
+  doc.save(`harmony-flight-report-${upr.callsign}.pdf`);
 }
 
 async function exportAggregatedReport(uprs: UPRRow[], reports: FlightReportRow[], _schedules: TrialScheduleRow[], scopeLabel: string) {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
-  let y = 56;
 
-  doc.setFontSize(18); doc.setFont("helvetica", "bold");
-  doc.text("Harmony by AFRAA — Aggregated Trial Report", 40, y); y += 22;
-  doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(120);
-  doc.text(`${scopeLabel}    Generated ${new Date().toLocaleString("en-GB")}`, 40, y); y += 18;
-  doc.setTextColor(0);
+  drawHeader(doc, "Aggregated Trial Report", `${scopeLabel} · Generated ${new Date().toLocaleString("en-GB")}`);
+  let y = 180;
 
   const totals = reports.reduce((a, r) => ({
     time: a.time + Number(r.realised_time_min || 0),
@@ -651,47 +882,89 @@ async function exportAggregatedReport(uprs: UPRRow[], reports: FlightReportRow[]
     usd: a.usd + Number(r.cost_savings_usd || 0),
   }), { time: 0, fuel: 0, co2: 0, usd: 0 });
 
-  doc.setFontSize(12); doc.setFont("helvetica", "bold");
-  doc.text("Network totals", 40, y); y += 16;
-  doc.setFont("helvetica", "normal"); doc.setFontSize(11);
-  doc.text(`Flights reported:  ${reports.length}`, 40, y); y += 13;
-  doc.text(`Time saved:        ${totals.time.toFixed(0)} min`, 40, y); y += 13;
-  doc.text(`Fuel saved:        ${totals.fuel.toFixed(0)} kg`, 40, y); y += 13;
-  doc.text(`CO\u2082 avoided:       ${totals.co2.toFixed(0)} kg`, 40, y); y += 13;
-  doc.text(`Cost saved:        $${totals.usd.toFixed(2)}`, 40, y); y += 20;
+  sectionTitle(doc, "Network totals", 40, y); y += 16;
+  const cardW = (W - 80 - 18) / 4;
+  statCard(doc, 40, y, cardW, "Flights", `${reports.length}`);
+  statCard(doc, 40 + cardW + 6, y, cardW, "Fuel saved", `${totals.fuel.toFixed(0)} kg`);
+  statCard(doc, 40 + (cardW + 6) * 2, y, cardW, "CO2 avoided", `${totals.co2.toFixed(0)} kg`);
+  statCard(doc, 40 + (cardW + 6) * 3, y, cardW, "Cost saved", `$${totals.usd.toFixed(0)}`);
+  y += 60;
 
-  // by stage
-  const byStage = (["day1", "day3", "day7"] as TrialStage[]).map((s) => ({
-    stage: s, count: reports.filter((r) => r.trial_stage === s).length,
-    usd: reports.filter((r) => r.trial_stage === s).reduce((a, r) => a + Number(r.cost_savings_usd || 0), 0),
-  }));
-  doc.setFont("helvetica", "bold"); doc.text("By trial stage", 40, y); y += 14;
-  doc.setFont("helvetica", "normal");
-  for (const s of byStage) { doc.text(`${TRIAL_STAGE_META[s.stage].label}:  ${s.count} flights   $${s.usd.toFixed(0)} saved`, 40, y); y += 12; }
+  // By stage
+  sectionTitle(doc, "Performance by trial stage", 40, y); y += 18;
+  const byStage = (["day1", "day3", "day7"] as TrialStage[]).map((s) => {
+    const rs = reports.filter((r) => r.trial_stage === s);
+    return {
+      stage: s,
+      count: rs.length,
+      usd: rs.reduce((a, r) => a + Number(r.cost_savings_usd || 0), 0),
+      fuel: rs.reduce((a, r) => a + Number(r.realised_fuel_kg || 0), 0),
+    };
+  });
+  for (const s of byStage) {
+    const m = TRIAL_STAGE_META[s.stage];
+    const rgb: [number, number, number] = m.hex === "#38bdf8" ? BRAND.sky : m.hex === "#10b981" ? BRAND.emerald : [245, 158, 11];
+    y = ensureSpace(doc, y, 24);
+    doc.setFillColor(...rgb); doc.circle(48, y - 2, 4, "F");
+    doc.setTextColor(...BRAND.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text(m.label, 58, y);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(...BRAND.slate);
+    doc.text(`${s.count} flights   ${s.fuel.toFixed(0)} kg fuel   $${s.usd.toFixed(0)} saved`, 160, y);
+    y += 16;
+  }
   y += 8;
 
-  // by airline
+  // By airline
+  sectionTitle(doc, "By airline", 40, y); y += 18;
   const airlines = Array.from(new Set(reports.map((r) => uprs.find((u) => u.id === r.upr_id)?.airline_code ?? "?")));
-  doc.setFont("helvetica", "bold"); doc.text("By airline", 40, y); y += 14;
-  doc.setFont("helvetica", "normal");
   for (const a of airlines) {
     const rs = reports.filter((r) => uprs.find((u) => u.id === r.upr_id)?.airline_code === a);
     const usd = rs.reduce((acc, r) => acc + Number(r.cost_savings_usd || 0), 0);
     const fuel = rs.reduce((acc, r) => acc + Number(r.realised_fuel_kg || 0), 0);
-    if (y > 760) { doc.addPage(); y = 56; }
-    doc.text(`${a}:  ${rs.length} flights   ${fuel.toFixed(0)} kg fuel saved   $${usd.toFixed(0)}`, 40, y); y += 12;
+    y = ensureSpace(doc, y, 18);
+    doc.setFont("helvetica", "bold"); doc.setTextColor(...BRAND.ink); doc.setFontSize(10);
+    doc.text(a, 48, y);
+    doc.setFont("helvetica", "normal"); doc.setTextColor(...BRAND.slate);
+    doc.text(`${rs.length} flights   ${fuel.toFixed(0)} kg fuel saved   $${usd.toFixed(0)}`, 100, y);
+    y += 14;
   }
-  y += 10;
+  y += 8;
 
-  // flight log
-  if (y > 700) { doc.addPage(); y = 56; }
-  doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Flight log", 40, y); y += 16;
-  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+  // Flight log table
+  y = ensureSpace(doc, y, 60);
+  sectionTitle(doc, "Flight log", 40, y); y += 18;
+  // header row
+  doc.setFillColor(...BRAND.cardBg);
+  doc.rect(40, y - 12, W - 80, 18, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...BRAND.ink);
+  doc.text("Date", 48, y);
+  doc.text("Callsign", 110, y);
+  doc.text("Airline", 175, y);
+  doc.text("Route", 220, y);
+  doc.text("Stage", 290, y);
+  doc.text("Party", 345, y);
+  doc.text("Fuel kg", 395, y);
+  doc.text("USD", 455, y);
+  y += 12;
+  doc.setFont("helvetica", "normal");
   for (const r of reports) {
-    if (y > 770) { doc.addPage(); y = 56; }
+    y = ensureSpace(doc, y, 14);
     const u = uprs.find((x) => x.id === r.upr_id);
-    doc.text(`${fmtD(r.flight_date)}  ${u?.callsign ?? "—"}  ${u?.airline_code ?? ""}  ${u?.dep}→${u?.arr}  [${TRIAL_STAGE_META[r.trial_stage].label}]  ${r.party}  fuel ${Number(r.realised_fuel_kg).toFixed(0)}kg  $${Number(r.cost_savings_usd).toFixed(0)}`, 40, y); y += 11;
+    doc.setTextColor(...BRAND.slate);
+    doc.text(fmtD(r.flight_date).slice(0, 11), 48, y);
+    doc.setTextColor(...BRAND.ink);
+    doc.text(u?.callsign ?? "—", 110, y);
+    doc.setTextColor(...BRAND.slate);
+    doc.text(u?.airline_code ?? "", 175, y);
+    doc.text(`${u?.dep ?? ""}→${u?.arr ?? ""}`, 220, y);
+    doc.text(TRIAL_STAGE_META[r.trial_stage].label.split("-")[0], 290, y);
+    doc.text(r.party, 345, y);
+    doc.text(Number(r.realised_fuel_kg).toFixed(0), 395, y);
+    doc.text(`$${Number(r.cost_savings_usd).toFixed(0)}`, 455, y);
+    y += 12;
   }
+  doc.setTextColor(0, 0, 0);
 
+  drawFooter(doc);
   doc.save(`harmony-aggregated-report.pdf`);
 }

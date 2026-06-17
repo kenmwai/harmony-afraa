@@ -3,12 +3,12 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { supabase } from "@/integrations/supabase/client";
 import {
   FIRS, REJECT_REASONS, STATUS_META,
-  type AppSession, type BroadcastRow, type ChatRow, type IncidentRow, type SegmentRow, type SegStatus, type UPRRow,
+  type AppSession, type BroadcastRow, type ChatRow, type SegmentRow, type SegStatus, type UPRRow,
   type TrialScheduleRow, type FlightReportRow,
   fmtBytes, fmtTime,
 } from "@/lib/upr-types";
 import { uploadPdf, viewPdf, downloadPdf } from "@/lib/upr-storage";
-import { IncidentList, RegulatorView } from "@/components/TrialAndIncidents";
+import { RegulatorView } from "@/components/TrialAndIncidents";
 import { ScheduleProgressiveTrial, StagedTrialCalendar, FlightReportForm, FlightReportsList } from "@/components/FlightReports";
 
 export const Route = createFileRoute("/")({
@@ -65,23 +65,13 @@ function Gate() {
 }
 
 function PendingScreen({ pending, onRefresh }: { pending: { email: string; fullName: string; requestedRole: string | null; requestedScope: string | null }; onRefresh: () => void }) {
-  const [claiming, setClaiming] = useState(false);
-  const [msg, setMsg] = useState("");
-  const claimAdmin = async () => {
-    setClaiming(true); setMsg("");
-    const { data, error } = await supabase.rpc("claim_first_admin");
-    setClaiming(false);
-    if (error) { setMsg(error.message); return; }
-    if (data) { setMsg("You are now the platform administrator."); onRefresh(); }
-    else setMsg("An administrator already exists — wait for approval.");
-  };
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 grid place-items-center px-6">
       <div className="max-w-md w-full rounded-2xl bg-slate-900/70 ring-1 ring-slate-800 p-6">
         <div className="text-amber-300 text-xs uppercase tracking-wider mb-2">Pending administrator approval</div>
         <h1 className="text-xl font-semibold">Hi {pending.fullName}</h1>
         <p className="text-sm text-slate-400 mt-2">
-          Your account ({pending.email}) is waiting for an administrator to grant role
+          Your account ({pending.email}) is waiting for the AFRAA administrator to grant role
           <span className="text-slate-200"> {pending.requestedRole ?? "—"}</span>
           {pending.requestedScope ? <> · scope <span className="text-slate-200">{pending.requestedScope}</span></> : null}.
         </p>
@@ -89,18 +79,11 @@ function PendingScreen({ pending, onRefresh }: { pending: { email: string; fullN
           <button onClick={onRefresh} className="flex-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold rounded-md py-2 text-sm">Refresh status</button>
           <button onClick={() => supabase.auth.signOut()} className="px-3 ring-1 ring-slate-700 hover:bg-slate-800 rounded-md py-2 text-xs">Sign out</button>
         </div>
-        <div className="mt-5 pt-4 border-t border-slate-800">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">Platform setup</div>
-          <p className="text-[11px] text-slate-500 mb-2">If no administrator exists yet, claim the role to bootstrap the platform.</p>
-          <button onClick={claimAdmin} disabled={claiming} className="w-full text-xs ring-1 ring-fuchsia-500/40 hover:bg-fuchsia-500/10 text-fuchsia-300 rounded-md py-1.5">
-            {claiming ? "…" : "Claim first-admin role"}
-          </button>
-          {msg && <div className="mt-2 text-[11px] text-slate-300">{msg}</div>}
-        </div>
       </div>
     </div>
   );
 }
+
 
 // ─────────── Main app shell ───────────
 function UPRApp({ session }: { session: AppSession }) {
@@ -108,18 +91,16 @@ function UPRApp({ session }: { session: AppSession }) {
   const [segments, setSegments] = useState<SegmentRow[]>([]);
   const [chat, setChat] = useState<ChatRow[]>([]);
   const [broadcasts, setBroadcasts] = useState<BroadcastRow[]>([]);
-  const [incidents, setIncidents] = useState<IncidentRow[]>([]);
   const [schedules, setSchedules] = useState<TrialScheduleRow[]>([]);
   const [reports, setReports] = useState<FlightReportRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    const [u, s, c, b, i, sc, fr] = await Promise.all([
+    const [u, s, c, b, sc, fr] = await Promise.all([
       supabase.from("uprs").select("*").order("created_at", { ascending: false }),
       supabase.from("segments").select("*").order("order_idx"),
       supabase.from("chat_messages").select("*").order("created_at"),
       supabase.from("broadcasts").select("*").order("created_at", { ascending: false }),
-      supabase.from("incidents" as any).select("*").order("created_at", { ascending: false }),
       supabase.from("trial_schedules" as any).select("*").order("start_at"),
       supabase.from("flight_reports" as any).select("*").order("created_at", { ascending: false }),
     ]);
@@ -127,7 +108,6 @@ function UPRApp({ session }: { session: AppSession }) {
     if (s.data) setSegments(s.data as any);
     if (c.data) setChat(c.data as any);
     if (b.data) setBroadcasts(b.data as any);
-    if (i.data) setIncidents(i.data as any);
     if (sc.data) setSchedules(sc.data as any);
     if (fr.data) setReports(fr.data as any);
   }, []);
@@ -141,7 +121,6 @@ function UPRApp({ session }: { session: AppSession }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "segments" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "broadcasts" }, () => refetch())
-      .on("postgres_changes", { event: "*", schema: "public", table: "incidents" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "trial_schedules" }, () => refetch())
       .on("postgres_changes", { event: "*", schema: "public", table: "flight_reports" }, () => refetch())
       .subscribe();
@@ -172,8 +151,8 @@ function UPRApp({ session }: { session: AppSession }) {
             active={active} activeSegments={activeSegments} activeChat={activeChat}
           />
         )}
-        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} incidents={incidents} schedules={schedules} reports={reports} />}
-        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} incidents={incidents} broadcasts={broadcasts} session={session} schedules={schedules} reports={reports} />}
+        {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} schedules={schedules} reports={reports} />}
+        {session.role === "regulator" && <RegulatorView uprs={uprs} segments={segments} broadcasts={broadcasts} session={session} schedules={schedules} reports={reports} />}
       </div>
     </div>
   );
@@ -920,7 +899,7 @@ function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; s
 }
 
 // ─────────── Admin view: approvals + analytics ───────────
-function AdminView({ session, uprs, segments, incidents, schedules, reports }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[]; schedules: TrialScheduleRow[]; reports: FlightReportRow[] }) {
+function AdminView({ session, uprs, segments, schedules, reports }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; schedules: TrialScheduleRow[]; reports: FlightReportRow[] }) {
   type PendingRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
   const [pending, setPending] = useState<PendingRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1007,7 +986,6 @@ function AdminView({ session, uprs, segments, incidents, schedules, reports }: {
       <StagedTrialCalendar uprs={uprs} segments={segments} schedules={schedules} title="Aggregated trial calendar (all stages)" filter={{ type: "all" }} />
       <AdminUprActivity uprs={uprs} segments={segments} />
       <FlightReportsList uprs={uprs} reports={reports} schedules={schedules} scopeLabel="All trials across the network" />
-      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="Legacy incident feedback (pre-template)" />
     </div>
   );
 }

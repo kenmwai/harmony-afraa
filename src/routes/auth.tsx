@@ -32,6 +32,8 @@ function AuthPage() {
   const [fir, setFir] = useState(FIRS[0].code);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [forgot, setForgot] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -98,16 +100,53 @@ function AuthPage() {
     }
   };
 
+  const sendReset = async () => {
+    setErr(""); setResetSent(false);
+    if (!email.trim()) { setErr("Enter your email above first"); return; }
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setResetSent(true);
+  };
+
+  if (forgot) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans grid place-items-center px-6 py-10">
+        <div className="w-full max-w-md rounded-2xl bg-slate-900/70 ring-1 ring-slate-800 p-6 shadow-2xl">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">H</div>
+            <div>
+              <div className="font-semibold tracking-tight">Harmony by AFRAA</div>
+              <div className="text-[11px] text-slate-400 -mt-0.5">Forgot your password</div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 mb-3">Enter the email you signed up with. We'll send you a reset link.</p>
+          <Field label="Email" value={email} onChange={setEmail} type="email" placeholder="you@airline.com" />
+          {err && <div className="mt-2 text-[11px] text-rose-400">{err}</div>}
+          {resetSent && <div className="mt-2 text-[11px] text-emerald-300">✓ Reset link sent — check your inbox.</div>}
+          <button onClick={sendReset} disabled={busy} className="mt-4 w-full bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold rounded-lg py-2.5 text-sm">
+            {busy ? "Sending…" : "Send reset link"}
+          </button>
+          <button onClick={() => { setForgot(false); setErr(""); setResetSent(false); }} className="mt-3 w-full text-[11px] text-slate-400 hover:text-sky-300">← Back to sign in</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans grid place-items-center px-6 py-10">
       <div className="w-full max-w-md rounded-2xl bg-slate-900/70 ring-1 ring-slate-800 p-6 shadow-2xl">
         <div className="flex items-center gap-3 mb-5">
-          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">U</div>
+          <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-sky-500 to-emerald-500 grid place-items-center font-black text-slate-950">H</div>
           <div>
-            <div className="font-semibold tracking-tight">UPR Coordination Platform</div>
+            <div className="font-semibold tracking-tight">Harmony by AFRAA</div>
             <div className="text-[11px] text-slate-400 -mt-0.5">African User Preferred Routes</div>
           </div>
         </div>
+
 
         <div className="grid grid-cols-2 gap-1 mb-4 p-1 bg-slate-950/60 ring-1 ring-slate-800 rounded-lg">
           {(["signin", "signup"] as const).map((m) => (
@@ -170,6 +209,11 @@ function AuthPage() {
         <button onClick={submit} disabled={busy} className="mt-4 w-full bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold rounded-lg py-2.5 text-sm transition">
           {busy ? "Working…" : mode === "signup" ? "Create account" : "Sign in"}
         </button>
+        {mode === "signin" && (
+          <button onClick={() => { setForgot(true); setErr(""); }} className="mt-2 w-full text-[11px] text-slate-400 hover:text-sky-300">
+            Forgot password?
+          </button>
+        )}
 
         {mode === "signup" && (
           <div className="text-[10px] text-slate-500 text-center mt-3">

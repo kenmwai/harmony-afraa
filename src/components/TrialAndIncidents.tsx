@@ -409,9 +409,9 @@ async function exportIncidentReport(upr: UPRRow, rows: IncidentRow[]) {
 // ─────────── Regulator / Observer view (read-only) ───────────
 
 export function RegulatorView({
-  uprs, segments, incidents, broadcasts, session, schedules, reports,
+  uprs, segments, broadcasts, session, schedules, reports,
 }: {
-  uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[];
+  uprs: UPRRow[]; segments: SegmentRow[];
   broadcasts: any[]; session: AppSession;
   schedules: TrialScheduleRow[]; reports: FlightReportRow[];
 }) {
@@ -461,7 +461,6 @@ export function RegulatorView({
       <ReadonlyUprActivity uprs={uprs} segments={segments} />
 
       <FlightReportsList uprs={uprs} reports={reports} schedules={schedules} scopeLabel="All trial flights across the network" />
-      <IncidentList uprs={uprs} incidents={incidents} scopeLabel="Legacy incident feedback (pre-template)" />
 
       <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
         <div className="text-sm font-semibold mb-2">Issue broadcast notice</div>
