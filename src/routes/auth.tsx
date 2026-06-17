@@ -32,6 +32,8 @@ function AuthPage() {
   const [fir, setFir] = useState(FIRS[0].code);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [forgot, setForgot] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
