@@ -65,23 +65,13 @@ function Gate() {
 }
 
 function PendingScreen({ pending, onRefresh }: { pending: { email: string; fullName: string; requestedRole: string | null; requestedScope: string | null }; onRefresh: () => void }) {
-  const [claiming, setClaiming] = useState(false);
-  const [msg, setMsg] = useState("");
-  const claimAdmin = async () => {
-    setClaiming(true); setMsg("");
-    const { data, error } = await supabase.rpc("claim_first_admin");
-    setClaiming(false);
-    if (error) { setMsg(error.message); return; }
-    if (data) { setMsg("You are now the platform administrator."); onRefresh(); }
-    else setMsg("An administrator already exists — wait for approval.");
-  };
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 grid place-items-center px-6">
       <div className="max-w-md w-full rounded-2xl bg-slate-900/70 ring-1 ring-slate-800 p-6">
         <div className="text-amber-300 text-xs uppercase tracking-wider mb-2">Pending administrator approval</div>
         <h1 className="text-xl font-semibold">Hi {pending.fullName}</h1>
         <p className="text-sm text-slate-400 mt-2">
-          Your account ({pending.email}) is waiting for an administrator to grant role
+          Your account ({pending.email}) is waiting for the AFRAA administrator to grant role
           <span className="text-slate-200"> {pending.requestedRole ?? "—"}</span>
           {pending.requestedScope ? <> · scope <span className="text-slate-200">{pending.requestedScope}</span></> : null}.
         </p>
@@ -89,18 +79,11 @@ function PendingScreen({ pending, onRefresh }: { pending: { email: string; fullN
           <button onClick={onRefresh} className="flex-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold rounded-md py-2 text-sm">Refresh status</button>
           <button onClick={() => supabase.auth.signOut()} className="px-3 ring-1 ring-slate-700 hover:bg-slate-800 rounded-md py-2 text-xs">Sign out</button>
         </div>
-        <div className="mt-5 pt-4 border-t border-slate-800">
-          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">Platform setup</div>
-          <p className="text-[11px] text-slate-500 mb-2">If no administrator exists yet, claim the role to bootstrap the platform.</p>
-          <button onClick={claimAdmin} disabled={claiming} className="w-full text-xs ring-1 ring-fuchsia-500/40 hover:bg-fuchsia-500/10 text-fuchsia-300 rounded-md py-1.5">
-            {claiming ? "…" : "Claim first-admin role"}
-          </button>
-          {msg && <div className="mt-2 text-[11px] text-slate-300">{msg}</div>}
-        </div>
       </div>
     </div>
   );
 }
+
 
 // ─────────── Main app shell ───────────
 function UPRApp({ session }: { session: AppSession }) {
