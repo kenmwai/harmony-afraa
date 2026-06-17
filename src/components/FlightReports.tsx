@@ -968,7 +968,3 @@ async function exportAggregatedReport(uprs: UPRRow[], reports: FlightReportRow[]
   drawFooter(doc);
   doc.save(`harmony-aggregated-report.pdf`);
 }
-
-
-  doc.save(`harmony-aggregated-report.pdf`);
-}
