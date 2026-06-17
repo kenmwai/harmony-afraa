@@ -114,7 +114,7 @@ export function ScheduleProgressiveTrial({ upr, segs, schedules }: { upr: UPRRow
   );
 }
 
-// ─────────── Stage-colored Trial Calendar ───────────
+// ─────────── Stage-colored Trial Calendar (clickable) ───────────
 
 export function StagedTrialCalendar({
   uprs, segments, schedules, title, filter,
@@ -133,12 +133,12 @@ export function StagedTrialCalendar({
   }, [uprs, segments, schedules, filter]);
 
   const [cursor, setCursor] = useState<Date>(() => { const d = new Date(); d.setDate(1); return d; });
+  const [selected, setSelected] = useState<TrialScheduleRow | null>(null);
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  // span schedules across days
   const dayHas = (d: number) => {
     const cellStart = new Date(year, month, d).getTime();
     const cellEnd = cellStart + 86_400_000;
@@ -153,12 +153,15 @@ export function StagedTrialCalendar({
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, trials: dayHas(d) });
 
+  const selectedUpr = selected ? uprs.find((u) => u.id === selected.upr_id) ?? null : null;
+  const selectedSegs = selected ? segments.filter((s) => s.upr_id === selected.upr_id).sort((a,b) => a.order_idx - b.order_idx) : [];
+
   return (
     <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-4">
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="text-sm font-semibold">{title}</div>
-          <div className="text-[11px] text-slate-400">{filtered.length} scheduled trial{filtered.length === 1 ? "" : "s"}</div>
+          <div className="text-[11px] text-slate-400">{filtered.length} scheduled trial{filtered.length === 1 ? "" : "s"} · click a flight for details</div>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setCursor(new Date(year, month - 1, 1))} className="text-xs px-2 py-1 rounded ring-1 ring-slate-700 hover:bg-slate-800">‹</button>
@@ -188,9 +191,9 @@ export function StagedTrialCalendar({
                     const u = uprs.find((x) => x.id === s.upr_id);
                     const m = TRIAL_STAGE_META[s.stage];
                     return (
-                      <div key={s.id} className={`${m.bg} ${m.color} ring-1 ${m.ring} rounded px-1 py-0.5 truncate`}>
+                      <button key={s.id} onClick={() => setSelected(s)} className={`${m.bg} ${m.color} ring-1 ${m.ring} rounded px-1 py-0.5 truncate w-full text-left hover:brightness-125 cursor-pointer`}>
                         <span className="font-mono">{u?.callsign ?? "—"}</span> · {m.label.split("-")[0]}
-                      </div>
+                      </button>
                     );
                   })}
                   {c.trials.length > 3 && <div className="text-slate-500">+{c.trials.length - 3}</div>}
@@ -200,9 +203,52 @@ export function StagedTrialCalendar({
           </div>
         ))}
       </div>
+
+      {selected && selectedUpr && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur grid place-items-center p-6" onClick={() => setSelected(null)}>
+          <div className="max-w-lg w-full rounded-2xl bg-slate-900 ring-1 ring-slate-700 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-slate-400">Scheduled trial flight</div>
+                <div className="text-lg font-semibold mt-0.5">{selectedUpr.callsign} <span className="text-slate-500">·</span> <span className="text-slate-300 text-sm">{selectedUpr.flight_no}</span></div>
+              </div>
+              <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-slate-100 text-xl leading-none">×</button>
+            </div>
+            <div className="flex items-center gap-2 mb-3">
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded ring-1 text-[11px] ${TRIAL_STAGE_META[selected.stage].bg} ${TRIAL_STAGE_META[selected.stage].color} ${TRIAL_STAGE_META[selected.stage].ring}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${TRIAL_STAGE_META[selected.stage].dot}`} />{TRIAL_STAGE_META[selected.stage].label}
+              </span>
+              <span className="text-[11px] text-slate-400">{selectedUpr.airline_code} · {selectedUpr.aircraft}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-[12px]">
+              <Pair label="Route" value={`${selectedUpr.dep} → ${selectedUpr.arr}`} />
+              <Pair label="Duration" value={`${TRIAL_STAGE_META[selected.stage].days} day(s)`} />
+              <Pair label="Starts" value={fmtDT(selected.start_at)} />
+              <Pair label="Ends" value={fmtDT(selected.end_at)} />
+              <Pair label="Baseline" value={`${selectedUpr.baseline_minutes} min`} />
+              <Pair label="UPR" value={`${selectedUpr.optimized_minutes} min`} />
+            </div>
+            <div className="mt-3">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">FIRs traversed</div>
+              <div className="flex flex-wrap gap-1">
+                {selectedSegs.map((s) => (
+                  <span key={s.id} className="text-[11px] px-1.5 py-0.5 rounded bg-slate-800 ring-1 ring-slate-700 font-mono">
+                    {s.fir_code}
+                  </span>
+                ))}
+                {selectedSegs.length === 0 && <span className="text-[11px] text-slate-500">—</span>}
+              </div>
+            </div>
+            {selected.notes && (
+              <div className="mt-3 text-[12px] text-slate-300 bg-slate-950/40 rounded p-2">{selected.notes}</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ─────────── Flight Report Form (template) ───────────
 
