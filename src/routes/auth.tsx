@@ -209,6 +209,11 @@ function AuthPage() {
         <button onClick={submit} disabled={busy} className="mt-4 w-full bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-slate-950 font-semibold rounded-lg py-2.5 text-sm transition">
           {busy ? "Working…" : mode === "signup" ? "Create account" : "Sign in"}
         </button>
+        {mode === "signin" && (
+          <button onClick={() => { setForgot(true); setErr(""); }} className="mt-2 w-full text-[11px] text-slate-400 hover:text-sky-300">
+            Forgot password?
+          </button>
+        )}
 
         {mode === "signup" && (
           <div className="text-[10px] text-slate-500 text-center mt-3">
