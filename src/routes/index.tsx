@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { supabase } from "@/integrations/supabase/client";
 import {
   FIRS, REJECT_REASONS, STATUS_META,
-  type AppSession, type BroadcastRow, type ChatRow, type IncidentRow, type SegmentRow, type SegStatus, type UPRRow,
+  type AppSession, type BroadcastRow, type ChatRow, type SegmentRow, type SegStatus, type UPRRow,
   type TrialScheduleRow, type FlightReportRow,
   fmtBytes, fmtTime,
 } from "@/lib/upr-types";
