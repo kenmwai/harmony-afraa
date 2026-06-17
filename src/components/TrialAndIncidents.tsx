@@ -409,9 +409,9 @@ async function exportIncidentReport(upr: UPRRow, rows: IncidentRow[]) {
 // ─────────── Regulator / Observer view (read-only) ───────────
 
 export function RegulatorView({
-  uprs, segments, incidents, broadcasts, session, schedules, reports,
+  uprs, segments, broadcasts, session, schedules, reports,
 }: {
-  uprs: UPRRow[]; segments: SegmentRow[]; incidents: IncidentRow[];
+  uprs: UPRRow[]; segments: SegmentRow[];
   broadcasts: any[]; session: AppSession;
   schedules: TrialScheduleRow[]; reports: FlightReportRow[];
 }) {
