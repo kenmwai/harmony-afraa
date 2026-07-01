@@ -95,37 +95,73 @@ function UPRApp({ session }: { session: AppSession }) {
   const [reports, setReports] = useState<FlightReportRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  // Per-role scoping applied at query time on top of RLS.
+  // Hard LIMITs prevent unbounded reads as the dataset grows to 1000+ users.
+  const MAX_UPRS = 500;
+  const MAX_SEGMENTS = 5000;
+  const MAX_CHAT = 500;
+  const MAX_BROADCASTS = 100;
+  const MAX_SCHEDULES = 1000;
+  const MAX_REPORTS = 1000;
+
   const refetch = useCallback(async () => {
+    // uprs: airlines only see their own airline_code; admin/regulator/ansp rely on RLS.
+    let uprQ = supabase.from("uprs").select("*").order("created_at", { ascending: false }).limit(MAX_UPRS);
+    if (session.role === "airline" && session.scope) uprQ = uprQ.eq("airline_code", session.scope);
+
     const [u, s, c, b, sc, fr] = await Promise.all([
-      supabase.from("uprs").select("*").order("created_at", { ascending: false }),
-      supabase.from("segments").select("*").order("order_idx"),
-      supabase.from("chat_messages").select("*").order("created_at"),
-      supabase.from("broadcasts").select("*").order("created_at", { ascending: false }),
-      supabase.from("trial_schedules" as any).select("*").order("start_at"),
-      supabase.from("flight_reports" as any).select("*").order("created_at", { ascending: false }),
+      uprQ,
+      supabase.from("segments").select("*").order("order_idx").limit(MAX_SEGMENTS),
+      supabase.from("chat_messages").select("*").order("created_at", { ascending: false }).limit(MAX_CHAT),
+      supabase.from("broadcasts").select("*").order("created_at", { ascending: false }).limit(MAX_BROADCASTS),
+      supabase.from("trial_schedules" as any).select("*").order("start_at").limit(MAX_SCHEDULES),
+      supabase.from("flight_reports" as any).select("*").order("created_at", { ascending: false }).limit(MAX_REPORTS),
     ]);
     if (u.data) setUprs(u.data as any);
     if (s.data) setSegments(s.data as any);
-    if (c.data) setChat(c.data as any);
+    // chat was fetched newest-first for the LIMIT; flip back to ascending for the UI.
+    if (c.data) setChat((c.data as any[]).slice().reverse() as any);
     if (b.data) setBroadcasts(b.data as any);
     if (sc.data) setSchedules(sc.data as any);
     if (fr.data) setReports(fr.data as any);
-  }, []);
+  }, [session.role, session.scope]);
 
   useEffect(() => { refetch(); }, [refetch]);
 
+  // Incremental realtime updates: patch local state instead of refetching everything.
+  // This is the single biggest scalability fix — old code did 6 full-table reads per event.
   useEffect(() => {
+    const applyUpsert = <T extends { id: string }>(setter: React.Dispatch<React.SetStateAction<T[]>>, row: T, prepend = false) =>
+      setter((prev) => {
+        const i = prev.findIndex((r) => r.id === row.id);
+        if (i === -1) return prepend ? [row, ...prev] : [...prev, row];
+        const next = prev.slice(); next[i] = { ...next[i], ...row }; return next;
+      });
+    const applyDelete = <T extends { id: string }>(setter: React.Dispatch<React.SetStateAction<T[]>>, id: string) =>
+      setter((prev) => prev.filter((r) => r.id !== id));
+
+    const handle = <T extends { id: string }>(setter: React.Dispatch<React.SetStateAction<T[]>>, prepend = false) =>
+      (payload: any) => {
+        const evt = payload.eventType || payload.event;
+        if (evt === "DELETE") { const id = payload.old?.id; if (id) applyDelete(setter, id); }
+        else { const row = payload.new as T; if (row?.id) applyUpsert(setter, row, prepend); }
+      };
+
+    // Airlines only care about their own UPRs; use a server-side filter to cut fanout.
+    const uprFilter = session.role === "airline" && session.scope ? `airline_code=eq.${session.scope}` : undefined;
+
     const ch = supabase
-      .channel("upr-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "uprs" }, () => refetch())
-      .on("postgres_changes", { event: "*", schema: "public", table: "segments" }, () => refetch())
-      .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, () => refetch())
-      .on("postgres_changes", { event: "*", schema: "public", table: "broadcasts" }, () => refetch())
-      .on("postgres_changes", { event: "*", schema: "public", table: "trial_schedules" }, () => refetch())
-      .on("postgres_changes", { event: "*", schema: "public", table: "flight_reports" }, () => refetch())
+      .channel(`upr-live-${session.userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "uprs", filter: uprFilter }, handle(setUprs, true))
+      .on("postgres_changes", { event: "*", schema: "public", table: "segments" }, handle(setSegments))
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, handle(setChat))
+      .on("postgres_changes", { event: "*", schema: "public", table: "broadcasts" }, handle(setBroadcasts, true))
+      .on("postgres_changes", { event: "*", schema: "public", table: "trial_schedules" }, handle(setSchedules))
+      .on("postgres_changes", { event: "*", schema: "public", table: "flight_reports" }, handle(setReports, true))
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [refetch]);
+  }, [session.userId, session.role, session.scope]);
+
 
   const active = uprs.find((u) => u.id === activeId) ?? null;
   const activeSegments = useMemo(() => segments.filter((s) => s.upr_id === activeId).sort((a, b) => a.order_idx - b.order_idx), [segments, activeId]);
