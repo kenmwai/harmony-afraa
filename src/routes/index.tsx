@@ -941,7 +941,12 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id,email,full_name,requested_role,requested_scope,created_at,approved").eq("approved", false).order("created_at");
+    const { data } = await supabase
+      .from("profiles")
+      .select("id,email,full_name,requested_role,requested_scope,created_at,approved,rejected")
+      .eq("approved", false)
+      .eq("rejected", false)
+      .order("created_at");
     setPending((data ?? []) as any);
   }, []);
   useEffect(() => { load(); }, [load, session.userId]);
@@ -956,38 +961,27 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
     setBusy(null);
   };
 
-  // Analytics
-  const verdictOf = (uprId: string) => computeVerdict(segments.filter((s) => s.upr_id === uprId));
-  const approved = uprs.filter((u) => verdictOf(u.id) === "APPROVED");
-  const minSaved = approved.reduce((s, u) => s + Math.max(0, u.baseline_minutes - u.optimized_minutes), 0);
-  const fuelSaved = approved.reduce((s, u) => s + Math.max(0, u.baseline_minutes - u.optimized_minutes) * Number(u.burn_kg_per_min), 0);
-  const co2 = fuelSaved * 3.16;
-  const stats = [
-    { label: "Approved UPR Trials", value: approved.length.toString(), sub: `of ${uprs.length} total` },
-    { label: "Flight Minutes Saved", value: minSaved.toLocaleString(), sub: "minutes" },
-    { label: "Jet Fuel Conserved", value: fuelSaved.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: "kg" },
-    { label: "CO₂ Emissions Avoided", value: co2.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: "kg CO₂" },
-  ];
+  const reject = async (p: PendingRow) => {
+    if (!confirm(`Reject account request from ${p.full_name} (${p.email})? They will be removed from your pending list.`)) return;
+    const reason = prompt("Optional reason for rejection:", "") ?? "";
+    setBusy(p.id);
+    const { error } = await supabase.rpc("reject_user", { _user_id: p.id, _reason: reason || null });
+    if (error) alert(error.message);
+    await load();
+    setBusy(null);
+  };
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Administrator Console</h1>
-        <p className="text-sm text-slate-400">Approve new operators and review operational impact.</p>
-      </div>
-      <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-semibold">Pending account approvals ({pending.length})</div>
-          <button onClick={load} className="text-[11px] text-sky-400 hover:text-sky-300">Refresh</button>
-        </div>
-        {pending.length === 0 ? (
-          <div className="text-xs text-slate-500 py-4 text-center">No pending requests.</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase tracking-wider text-slate-400">
-              <tr><th className="text-left py-2">Name</th><th className="text-left">Email</th><th className="text-left">Requested role</th><th className="text-left">Scope</th><th className="text-right">Action</th></tr>
-            </thead>
-            <tbody>
+  const remove = async (p: PendingRow) => {
+    if (!confirm(`Permanently delete the account for ${p.email}? This cannot be undone.`)) return;
+    setBusy(p.id);
+    try {
+      await deleteUserAccount({ data: { userId: p.id } });
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to delete account");
+    }
+    await load();
+    setBusy(null);
+  };
               {pending.map((p) => (
                 <tr key={p.id} className="border-t border-slate-800">
                   <td className="py-2">{p.full_name}</td>
@@ -995,9 +989,17 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
                   <td><span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800">{p.requested_role ?? "—"}</span></td>
                   <td className="font-mono text-slate-300">{p.requested_scope ?? "—"}</td>
                   <td className="text-right">
-                    <button disabled={busy === p.id} onClick={() => approve(p)} className="text-xs px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-emerald-950 font-semibold">
-                      {busy === p.id ? "…" : "Approve"}
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button disabled={busy === p.id} onClick={() => approve(p)} className="text-xs px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-emerald-950 font-semibold">
+                        {busy === p.id ? "…" : "Approve"}
+                      </button>
+                      <button disabled={busy === p.id} onClick={() => reject(p)} className="text-xs px-3 py-1 rounded bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-amber-950 font-semibold">
+                        Reject
+                      </button>
+                      <button disabled={busy === p.id} onClick={() => remove(p)} className="text-xs px-3 py-1 rounded bg-red-500 hover:bg-red-400 disabled:opacity-40 text-red-50 font-semibold">
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
