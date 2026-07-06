@@ -10,6 +10,7 @@ import {
 import { uploadPdf, viewPdf, downloadPdf } from "@/lib/upr-storage";
 import { RegulatorView } from "@/components/TrialAndIncidents";
 import { ScheduleProgressiveTrial, StagedTrialCalendar, FlightReportForm, FlightReportsList } from "@/components/FlightReports";
+import { deleteUserAccount } from "@/lib/admin-users.functions";
 
 export const Route = createFileRoute("/")({
   ssr: false,
