@@ -966,7 +966,7 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
     if (!confirm(`Reject account request from ${p.full_name} (${p.email})? They will be removed from your pending list.`)) return;
     const reason = prompt("Optional reason for rejection:", "") ?? "";
     setBusy(p.id);
-    const { error } = await supabase.rpc("reject_user", { _user_id: p.id, _reason: reason || null });
+    const { error } = await supabase.rpc("reject_user", { _user_id: p.id, _reason: reason || undefined });
     if (error) alert(error.message);
     await load();
     setBusy(null);
