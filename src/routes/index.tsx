@@ -982,6 +982,39 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
     await load();
     setBusy(null);
   };
+
+  // Analytics
+  const verdictOf = (uprId: string) => computeVerdict(segments.filter((s) => s.upr_id === uprId));
+  const approved = uprs.filter((u) => verdictOf(u.id) === "APPROVED");
+  const minSaved = approved.reduce((s, u) => s + Math.max(0, u.baseline_minutes - u.optimized_minutes), 0);
+  const fuelSaved = approved.reduce((s, u) => s + Math.max(0, u.baseline_minutes - u.optimized_minutes) * Number(u.burn_kg_per_min), 0);
+  const co2 = fuelSaved * 3.16;
+  const stats = [
+    { label: "Approved UPR Trials", value: approved.length.toString(), sub: `of ${uprs.length} total` },
+    { label: "Flight Minutes Saved", value: minSaved.toLocaleString(), sub: "minutes" },
+    { label: "Jet Fuel Conserved", value: fuelSaved.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: "kg" },
+    { label: "CO₂ Emissions Avoided", value: co2.toLocaleString(undefined, { maximumFractionDigits: 0 }), sub: "kg CO₂" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Administrator Console</h1>
+        <p className="text-sm text-slate-400">Approve new operators and review operational impact.</p>
+      </div>
+      <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-semibold">Pending account approvals ({pending.length})</div>
+          <button onClick={load} className="text-[11px] text-sky-400 hover:text-sky-300">Refresh</button>
+        </div>
+        {pending.length === 0 ? (
+          <div className="text-xs text-slate-500 py-4 text-center">No pending requests.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-[11px] uppercase tracking-wider text-slate-400">
+              <tr><th className="text-left py-2">Name</th><th className="text-left">Email</th><th className="text-left">Requested role</th><th className="text-left">Scope</th><th className="text-right">Action</th></tr>
+            </thead>
+            <tbody>
               {pending.map((p) => (
                 <tr key={p.id} className="border-t border-slate-800">
                   <td className="py-2">{p.full_name}</td>
