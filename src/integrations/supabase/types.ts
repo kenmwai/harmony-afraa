@@ -297,6 +297,9 @@ export type Database = {
           email: string
           full_name: string
           id: string
+          rejected: boolean
+          rejected_at: string | null
+          rejected_reason: string | null
           requested_role: Database["public"]["Enums"]["app_role"] | null
           requested_scope: string | null
         }
@@ -306,6 +309,9 @@ export type Database = {
           email: string
           full_name: string
           id: string
+          rejected?: boolean
+          rejected_at?: string | null
+          rejected_reason?: string | null
           requested_role?: Database["public"]["Enums"]["app_role"] | null
           requested_scope?: string | null
         }
@@ -315,6 +321,9 @@ export type Database = {
           email?: string
           full_name?: string
           id?: string
+          rejected?: boolean
+          rejected_at?: string | null
+          rejected_reason?: string | null
           requested_role?: Database["public"]["Enums"]["app_role"] | null
           requested_scope?: string | null
         }
@@ -551,6 +560,10 @@ export type Database = {
       is_regulator: { Args: { _uid: string }; Returns: boolean }
       register_airline: {
         Args: { _code: string; _name: string }
+        Returns: undefined
+      }
+      reject_user: {
+        Args: { _reason?: string; _user_id: string }
         Returns: undefined
       }
       user_scope: {

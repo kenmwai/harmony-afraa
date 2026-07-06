@@ -10,6 +10,7 @@ import {
 import { uploadPdf, viewPdf, downloadPdf } from "@/lib/upr-storage";
 import { RegulatorView } from "@/components/TrialAndIncidents";
 import { ScheduleProgressiveTrial, StagedTrialCalendar, FlightReportForm, FlightReportsList } from "@/components/FlightReports";
+import { deleteUserAccount } from "@/lib/admin-users.functions";
 
 export const Route = createFileRoute("/")({
   ssr: false,
@@ -941,7 +942,12 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id,email,full_name,requested_role,requested_scope,created_at,approved").eq("approved", false).order("created_at");
+    const { data } = await supabase
+      .from("profiles")
+      .select("id,email,full_name,requested_role,requested_scope,created_at,approved,rejected")
+      .eq("approved", false)
+      .eq("rejected", false)
+      .order("created_at");
     setPending((data ?? []) as any);
   }, []);
   useEffect(() => { load(); }, [load, session.userId]);
@@ -952,6 +958,28 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
     const scope = p.requested_scope;
     const { error } = await supabase.rpc("approve_user", { _user_id: p.id, _role: role, _scope: scope ?? "" });
     if (error) alert(error.message);
+    await load();
+    setBusy(null);
+  };
+
+  const reject = async (p: PendingRow) => {
+    if (!confirm(`Reject account request from ${p.full_name} (${p.email})? They will be removed from your pending list.`)) return;
+    const reason = prompt("Optional reason for rejection:", "") ?? "";
+    setBusy(p.id);
+    const { error } = await supabase.rpc("reject_user", { _user_id: p.id, _reason: reason || undefined });
+    if (error) alert(error.message);
+    await load();
+    setBusy(null);
+  };
+
+  const remove = async (p: PendingRow) => {
+    if (!confirm(`Permanently delete the account for ${p.email}? This cannot be undone.`)) return;
+    setBusy(p.id);
+    try {
+      await deleteUserAccount({ data: { userId: p.id } });
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to delete account");
+    }
     await load();
     setBusy(null);
   };
@@ -995,9 +1023,17 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
                   <td><span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800">{p.requested_role ?? "—"}</span></td>
                   <td className="font-mono text-slate-300">{p.requested_scope ?? "—"}</td>
                   <td className="text-right">
-                    <button disabled={busy === p.id} onClick={() => approve(p)} className="text-xs px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-emerald-950 font-semibold">
-                      {busy === p.id ? "…" : "Approve"}
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button disabled={busy === p.id} onClick={() => approve(p)} className="text-xs px-3 py-1 rounded bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-emerald-950 font-semibold">
+                        {busy === p.id ? "…" : "Approve"}
+                      </button>
+                      <button disabled={busy === p.id} onClick={() => reject(p)} className="text-xs px-3 py-1 rounded bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-amber-950 font-semibold">
+                        Reject
+                      </button>
+                      <button disabled={busy === p.id} onClick={() => remove(p)} className="text-xs px-3 py-1 rounded bg-red-500 hover:bg-red-400 disabled:opacity-40 text-red-50 font-semibold">
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
