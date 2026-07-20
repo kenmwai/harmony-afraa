@@ -94,6 +94,7 @@ function UPRApp({ session }: { session: AppSession }) {
   const [broadcasts, setBroadcasts] = useState<BroadcastRow[]>([]);
   const [schedules, setSchedules] = useState<TrialScheduleRow[]>([]);
   const [reports, setReports] = useState<FlightReportRow[]>([]);
+  const [reactions, setReactions] = useState<ChatReactionRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   // Per-role scoping applied at query time on top of RLS.
