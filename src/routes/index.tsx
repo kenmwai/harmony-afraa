@@ -203,7 +203,7 @@ function UPRApp({ session }: { session: AppSession }) {
             session={session} uprs={uprs} segments={segments} broadcasts={broadcasts}
             schedules={schedules} reports={reports}
             activeId={activeId} setActiveId={setActiveId}
-            active={active} activeSegments={activeSegments} activeChat={activeChat}
+            active={active} activeSegments={activeSegments} activeChat={activeChat} reactions={reactions}
           />
         )}
         {session.role === "ansp" && (
@@ -211,7 +211,7 @@ function UPRApp({ session }: { session: AppSession }) {
             session={session} uprs={uprs} segments={segments} broadcasts={broadcasts}
             schedules={schedules} reports={reports}
             activeId={activeId} setActiveId={setActiveId}
-            active={active} activeSegments={activeSegments} activeChat={activeChat}
+            active={active} activeSegments={activeSegments} activeChat={activeChat} reactions={reactions}
           />
         )}
         {session.role === "admin" && <AdminView session={session} uprs={uprs} segments={segments} schedules={schedules} reports={reports} />}
@@ -339,12 +339,12 @@ function PdfBadge({ path, name, size, label }: { path: string; name: string; siz
 }
 
 // ─────────── Airline view ───────────
-function AirlineView({ session, uprs, segments, broadcasts, schedules, reports, activeId, setActiveId, active, activeSegments, activeChat }: {
+function AirlineView({ session, uprs, segments, broadcasts, schedules, reports, activeId, setActiveId, active, activeSegments, activeChat, reactions }: {
   session: AppSession;
   uprs: UPRRow[]; segments: SegmentRow[]; broadcasts: BroadcastRow[];
   schedules: TrialScheduleRow[]; reports: FlightReportRow[];
   activeId: string | null; setActiveId: (id: string | null) => void;
-  active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[];
+  active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[]; reactions: ChatReactionRow[];
 }) {
   const myUprs = useMemo(() => uprs.filter((u) => u.airline_code === session.scope), [uprs, session.scope]);
   const myReports = useMemo(() => reports.filter((r) => myUprs.some((u) => u.id === r.upr_id)), [reports, myUprs]);
@@ -690,12 +690,12 @@ function AirlineSegmentRow({ upr, seg, session }: { upr: UPRRow; seg: SegmentRow
 }
 
 // ─────────── ANSP view ───────────
-function ANSPView({ session, uprs, segments, broadcasts, schedules, reports, activeId, setActiveId, active, activeSegments, activeChat }: {
+function ANSPView({ session, uprs, segments, broadcasts, schedules, reports, activeId, setActiveId, active, activeSegments, activeChat, reactions }: {
   session: AppSession;
   uprs: UPRRow[]; segments: SegmentRow[]; broadcasts: BroadcastRow[];
   schedules: TrialScheduleRow[]; reports: FlightReportRow[];
   activeId: string | null; setActiveId: (id: string | null) => void;
-  active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[];
+  active: UPRRow | null; activeSegments: SegmentRow[]; activeChat: ChatRow[]; reactions: ChatReactionRow[];
 }) {
   const fir = session.scope!;
   const firName = FIRS.find((f) => f.code === fir)?.name;
