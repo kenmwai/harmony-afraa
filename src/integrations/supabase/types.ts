@@ -92,6 +92,7 @@ export type Database = {
           author_label: string
           author_role: string
           created_at: string
+          edited_at: string | null
           id: string
           text: string
           upr_id: string
@@ -101,6 +102,7 @@ export type Database = {
           author_label: string
           author_role: string
           created_at?: string
+          edited_at?: string | null
           id?: string
           text: string
           upr_id: string
@@ -110,6 +112,7 @@ export type Database = {
           author_label?: string
           author_role?: string
           created_at?: string
+          edited_at?: string | null
           id?: string
           text?: string
           upr_id?: string
