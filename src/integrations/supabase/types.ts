@@ -127,6 +127,51 @@ export type Database = {
           },
         ]
       }
+      chat_reactions: {
+        Row: {
+          created_at: string
+          emoji: string
+          id: string
+          message_id: string
+          upr_id: string
+          user_id: string
+          user_label: string
+        }
+        Insert: {
+          created_at?: string
+          emoji: string
+          id?: string
+          message_id: string
+          upr_id: string
+          user_id?: string
+          user_label?: string
+        }
+        Update: {
+          created_at?: string
+          emoji?: string
+          id?: string
+          message_id?: string
+          upr_id?: string
+          user_id?: string
+          user_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_reactions_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_reactions_upr_id_fkey"
+            columns: ["upr_id"]
+            isOneToOne: false
+            referencedRelation: "uprs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       firs: {
         Row: {
           code: string
