@@ -164,10 +164,35 @@ function UPRApp({ session }: { session: AppSession }) {
     return () => { supabase.removeChannel(ch); };
   }, [session.userId, session.role, session.scope]);
 
+  // Reactions: fetch + subscribe scoped to the active UPR to keep payload light.
+  useEffect(() => {
+    if (!activeId) { setReactions([]); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("chat_reactions" as any).select("*").eq("upr_id", activeId).limit(2000);
+      if (!cancelled && data) setReactions(data as any);
+    })();
+    const ch = supabase
+      .channel(`reactions-${activeId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_reactions", filter: `upr_id=eq.${activeId}` }, (payload: any) => {
+        const evt = payload.eventType || payload.event;
+        if (evt === "DELETE") {
+          const id = payload.old?.id;
+          if (id) setReactions((prev) => prev.filter((r) => r.id !== id));
+        } else {
+          const row = payload.new as ChatReactionRow;
+          if (row?.id) setReactions((prev) => (prev.some((r) => r.id === row.id) ? prev : [...prev, row]));
+        }
+      })
+      .subscribe();
+    return () => { cancelled = true; supabase.removeChannel(ch); };
+  }, [activeId]);
+
 
   const active = uprs.find((u) => u.id === activeId) ?? null;
   const activeSegments = useMemo(() => segments.filter((s) => s.upr_id === activeId).sort((a, b) => a.order_idx - b.order_idx), [segments, activeId]);
   const activeChat = useMemo(() => chat.filter((m) => m.upr_id === activeId), [chat, activeId]);
+
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
