@@ -373,7 +373,7 @@ function AirlineView({ session, uprs, segments, broadcasts, schedules, reports, 
         ) : <EmptyCard text="Create or select a UPR request to begin." />}
       </main>
       <aside className="col-span-3 space-y-5">
-        {active && <SegmentChat upr={active} segs={activeSegments} chat={activeChat} session={session} />}
+        {active && <SegmentChat upr={active} segs={activeSegments} chat={activeChat} reactions={reactions} session={session} />}
         <BroadcastPanel broadcasts={broadcasts} session={session} />
       </aside>
     </div>
@@ -751,7 +751,7 @@ function ANSPView({ session, uprs, segments, broadcasts, schedules, reports, act
         ) : <EmptyCard text={`No active request for ${fir}.`} />}
       </main>
       <aside className="col-span-3 space-y-5">
-        {active && <SegmentChat upr={active} segs={activeSegments} chat={activeChat} session={session} />}
+        {active && <SegmentChat upr={active} segs={activeSegments} chat={activeChat} reactions={reactions} session={session} />}
         <BroadcastPanel broadcasts={broadcasts} session={session} />
       </aside>
     </div>
