@@ -112,6 +112,19 @@ export type ChatRow = {
   edited_at?: string | null;
 };
 
+export type ChatReactionRow = {
+  id: string;
+  message_id: string;
+  upr_id: string;
+  user_id: string;
+  user_label: string;
+  emoji: string;
+  created_at: string;
+};
+
+export const REACTION_EMOJIS = ["👍", "❤️", "😂", "🎉", "😮", "😢"] as const;
+
+
 
 export type BroadcastRow = {
   id: string;
