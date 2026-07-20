@@ -855,23 +855,30 @@ function ANSPDecisionPanel({ upr, seg, fir, session }: { upr: UPRRow; seg: Segme
 }
 
 // ─────────── Chat / Broadcast ───────────
-function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentRow[]; chat: ChatRow[]; session: AppSession }) {
+function SegmentChat({ upr, segs, chat, reactions, session }: { upr: UPRRow; segs: SegmentRow[]; chat: ChatRow[]; reactions: ChatReactionRow[]; session: AppSession }) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<ChatRow[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [pickerFor, setPickerFor] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  // Merge pending optimistic messages with confirmed ones; drop pending once the real row arrives.
   const confirmedIds = useMemo(() => new Set(chat.map((c) => c.id)), [chat]);
   const merged = useMemo(
     () => [...chat, ...pending.filter((p) => !confirmedIds.has(p.id))].sort((a, b) => a.created_at.localeCompare(b.created_at)),
     [chat, pending, confirmedIds]
   );
-  useEffect(() => {
-    setPending((prev) => prev.filter((p) => !confirmedIds.has(p.id)));
-  }, [confirmedIds]);
+  useEffect(() => { setPending((prev) => prev.filter((p) => !confirmedIds.has(p.id))); }, [confirmedIds]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [merged.length]);
+
+  const reactionsByMessage = useMemo(() => {
+    const m = new Map<string, ChatReactionRow[]>();
+    for (const r of reactions) {
+      const arr = m.get(r.message_id) ?? [];
+      arr.push(r); m.set(r.message_id, arr);
+    }
+    return m;
+  }, [reactions]);
 
   const myLabel =
     session.role === "airline" ? `${session.scope} Dispatcher` :
@@ -891,12 +898,7 @@ function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentR
     const { data, error } = await supabase.from("chat_messages")
       .insert({ upr_id: upr.id, author: session.userId, author_label: myLabel, author_role: session.role, text: trimmed })
       .select().single();
-    if (error) {
-      setPending((p) => p.filter((m) => m.id !== tempId));
-      setText(trimmed);
-      return;
-    }
-    // Swap tempId with real id so realtime dedupe works.
+    if (error) { setPending((p) => p.filter((m) => m.id !== tempId)); setText(trimmed); return; }
     if (data) setPending((p) => p.map((m) => (m.id === tempId ? { ...(data as any) } : m)));
   };
 
@@ -910,6 +912,22 @@ function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentR
     if (!confirm("Delete this message?")) return;
     await supabase.from("chat_messages").delete().eq("id", id);
   };
+
+  const toggleReaction = async (messageId: string, emoji: string) => {
+    if (messageId.startsWith("tmp-")) return;
+    const mine = reactions.find((r) => r.message_id === messageId && r.emoji === emoji && r.user_id === session.userId);
+    setPickerFor(null);
+    if (mine) {
+      setReactionsOptimisticRemove(mine.id);
+      await supabase.from("chat_reactions" as any).delete().eq("id", mine.id);
+    } else {
+      await supabase.from("chat_reactions" as any).insert({
+        message_id: messageId, upr_id: upr.id, user_id: session.userId, user_label: myLabel, emoji,
+      });
+    }
+  };
+  // Optimistic removal helper via a ref-less local set — realtime will reconcile.
+  const setReactionsOptimisticRemove = (_id: string) => { /* handled by realtime DELETE */ };
 
   const participants = [`${upr.airline_code} Dispatcher`, ...segs.map((s) => `${s.fir_code} ${FIRS.find((f) => f.code === s.fir_code)?.name ?? ""}`)];
 
@@ -926,6 +944,10 @@ function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentR
             isPending={m.id.startsWith("tmp-")}
             isEditing={editingId === m.id}
             editText={editText}
+            reactions={reactionsByMessage.get(m.id) ?? []}
+            pickerOpen={pickerFor === m.id}
+            onTogglePicker={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
+            onReact={(emoji) => toggleReaction(m.id, emoji)}
             onStartEdit={() => { setEditingId(m.id); setEditText(m.text); }}
             onCancelEdit={() => setEditingId(null)}
             onChangeEdit={setEditText}
@@ -943,11 +965,15 @@ function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentR
   );
 }
 function ChatBubble({
-  m, mineId, isPending, isEditing, editText, onStartEdit, onCancelEdit, onChangeEdit, onSaveEdit, onDelete,
+  m, mineId, isPending, isEditing, editText, reactions = [], pickerOpen,
+  onStartEdit, onCancelEdit, onChangeEdit, onSaveEdit, onDelete,
+  onTogglePicker, onReact,
 }: {
   m: ChatRow; mineId: string; isPending?: boolean; isEditing?: boolean; editText?: string;
+  reactions?: ChatReactionRow[]; pickerOpen?: boolean;
   onStartEdit?: () => void; onCancelEdit?: () => void; onChangeEdit?: (v: string) => void;
   onSaveEdit?: () => void; onDelete?: () => void;
+  onTogglePicker?: () => void; onReact?: (emoji: string) => void;
 }) {
   if (m.author_role === "system") return (
     <div className="text-center text-[10px] uppercase tracking-wider text-slate-500 py-1">
@@ -955,42 +981,73 @@ function ChatBubble({
     </div>
   );
   const mine = m.author === mineId;
+
+  // Group reactions by emoji
+  const grouped = reactions.reduce<Record<string, { count: number; mine: boolean; labels: string[] }>>((acc, r) => {
+    const g = acc[r.emoji] ?? { count: 0, mine: false, labels: [] };
+    g.count += 1;
+    if (r.user_id === mineId) g.mine = true;
+    g.labels.push(r.user_label || "User");
+    acc[r.emoji] = g;
+    return acc;
+  }, {});
+
   return (
     <div className={`group flex ${mine ? "justify-end" : "justify-start"}`}>
-      <div className={`relative max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm ${mine ? "bg-sky-500/90 text-slate-950" : "bg-slate-800 text-slate-100 ring-1 ring-slate-700"} ${isPending ? "opacity-60" : ""}`}>
-        <div className={`text-[10px] font-semibold opacity-80 ${mine ? "text-slate-900" : "text-emerald-300"}`}>{m.author_label}</div>
-        {isEditing ? (
-          <div className="flex flex-col gap-1 mt-0.5 min-w-[180px]">
-            <textarea
-              value={editText}
-              onChange={(e) => onChangeEdit?.(e.target.value)}
-              className="bg-slate-950/70 text-slate-100 ring-1 ring-slate-700 rounded px-1.5 py-1 text-xs outline-none focus:ring-sky-400"
-              rows={2}
-              autoFocus
-            />
-            <div className="flex gap-1.5 text-[10px]">
-              <button onClick={onSaveEdit} className="px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-semibold">Save</button>
-              <button onClick={onCancelEdit} className="px-2 py-0.5 rounded bg-slate-700 text-slate-200">Cancel</button>
+      <div className={`relative max-w-[85%] ${isPending ? "opacity-60" : ""}`}>
+        <div className={`relative rounded-lg px-2.5 py-1.5 text-sm ${mine ? "bg-sky-500/90 text-slate-950" : "bg-slate-800 text-slate-100 ring-1 ring-slate-700"}`}>
+          <div className={`text-[10px] font-semibold opacity-80 ${mine ? "text-slate-900" : "text-emerald-300"}`}>{m.author_label}</div>
+          {isEditing ? (
+            <div className="flex flex-col gap-1 mt-0.5 min-w-[180px]">
+              <textarea value={editText} onChange={(e) => onChangeEdit?.(e.target.value)} rows={2} autoFocus
+                className="bg-slate-950/70 text-slate-100 ring-1 ring-slate-700 rounded px-1.5 py-1 text-xs outline-none focus:ring-sky-400" />
+              <div className="flex gap-1.5 text-[10px]">
+                <button onClick={onSaveEdit} className="px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-semibold">Save</button>
+                <button onClick={onCancelEdit} className="px-2 py-0.5 rounded bg-slate-700 text-slate-200">Cancel</button>
+              </div>
             </div>
+          ) : (
+            <div className="leading-snug whitespace-pre-wrap break-words">{m.text}</div>
+          )}
+          <div className={`text-[9px] mt-0.5 opacity-60 ${mine ? "text-slate-900" : "text-slate-400"}`}>
+            {fmtTime(m.created_at)}
+            {m.edited_at ? <span className="ml-1 italic">· edited</span> : null}
+            {isPending ? <span className="ml-1 italic">· sending…</span> : null}
           </div>
-        ) : (
-          <div className="leading-snug whitespace-pre-wrap break-words">{m.text}</div>
-        )}
-        <div className={`text-[9px] mt-0.5 opacity-60 ${mine ? "text-slate-900" : "text-slate-400"}`}>
-          {fmtTime(m.created_at)}
-          {m.edited_at ? <span className="ml-1 italic">· edited</span> : null}
-          {isPending ? <span className="ml-1 italic">· sending…</span> : null}
+          {!isEditing && !isPending && (
+            <div className={`absolute -top-2.5 ${mine ? "left-1" : "right-1"} hidden group-hover:flex gap-1`}>
+              <button onClick={onTogglePicker} title="React" className="text-[11px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-200 ring-1 ring-slate-700 hover:bg-slate-800">😊</button>
+              {mine && <button onClick={onStartEdit} title="Edit" className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-200 ring-1 ring-slate-700 hover:bg-slate-800">✎</button>}
+              {mine && <button onClick={onDelete} title="Delete" className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-red-300 ring-1 ring-slate-700 hover:bg-slate-800">🗑</button>}
+            </div>
+          )}
+          {pickerOpen && (
+            <div className={`absolute z-10 ${mine ? "left-0" : "right-0"} -bottom-9 flex gap-0.5 bg-slate-950 ring-1 ring-slate-700 rounded-full px-1.5 py-1 shadow-lg`}>
+              {REACTION_EMOJIS.map((e) => (
+                <button key={e} onClick={() => onReact?.(e)} className="text-base leading-none hover:scale-125 transition-transform px-1">{e}</button>
+              ))}
+            </div>
+          )}
         </div>
-        {mine && !isEditing && !isPending && (
-          <div className="absolute -top-2 right-1 hidden group-hover:flex gap-1">
-            <button onClick={onStartEdit} title="Edit" className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-200 ring-1 ring-slate-700 hover:bg-slate-800">✎</button>
-            <button onClick={onDelete} title="Delete" className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-red-300 ring-1 ring-slate-700 hover:bg-slate-800">🗑</button>
+        {Object.keys(grouped).length > 0 && (
+          <div className={`flex flex-wrap gap-1 mt-1 ${mine ? "justify-end" : "justify-start"}`}>
+            {Object.entries(grouped).map(([emoji, g]) => (
+              <button
+                key={emoji}
+                onClick={() => onReact?.(emoji)}
+                title={g.labels.join(", ")}
+                className={`text-[11px] leading-none px-1.5 py-0.5 rounded-full ring-1 flex items-center gap-1 ${g.mine ? "bg-sky-500/20 ring-sky-400/60 text-sky-100" : "bg-slate-800/80 ring-slate-700 text-slate-200 hover:bg-slate-800"}`}
+              >
+                <span>{emoji}</span><span className="tabular-nums">{g.count}</span>
+              </button>
+            ))}
           </div>
         )}
       </div>
     </div>
   );
 }
+
 
 
 function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; session: AppSession }) {
