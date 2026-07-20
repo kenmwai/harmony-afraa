@@ -831,20 +831,60 @@ function ANSPDecisionPanel({ upr, seg, fir, session }: { upr: UPRRow; seg: Segme
 // ─────────── Chat / Broadcast ───────────
 function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentRow[]; chat: ChatRow[]; session: AppSession }) {
   const [text, setText] = useState("");
+  const [pending, setPending] = useState<ChatRow[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat.length]);
+
+  // Merge pending optimistic messages with confirmed ones; drop pending once the real row arrives.
+  const confirmedIds = useMemo(() => new Set(chat.map((c) => c.id)), [chat]);
+  const merged = useMemo(
+    () => [...chat, ...pending.filter((p) => !confirmedIds.has(p.id))].sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    [chat, pending, confirmedIds]
+  );
+  useEffect(() => {
+    setPending((prev) => prev.filter((p) => !confirmedIds.has(p.id)));
+  }, [confirmedIds]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [merged.length]);
+
   const myLabel =
     session.role === "airline" ? `${session.scope} Dispatcher` :
     session.role === "ansp" ? `${session.scope} ${FIRS.find((f) => f.code === session.scope)?.name ?? ""}` :
     "Admin";
+
   const send = async () => {
-    if (!text.trim()) return;
-    await supabase.from("chat_messages").insert({
-      upr_id: upr.id, author: session.userId, author_label: myLabel,
-      author_role: session.role, text: text.trim(),
-    });
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const tempId = `tmp-${crypto.randomUUID()}`;
+    const optimistic: ChatRow = {
+      id: tempId, upr_id: upr.id, author: session.userId, author_label: myLabel,
+      author_role: session.role, text: trimmed, created_at: new Date().toISOString(),
+    };
+    setPending((p) => [...p, optimistic]);
     setText("");
+    const { data, error } = await supabase.from("chat_messages")
+      .insert({ upr_id: upr.id, author: session.userId, author_label: myLabel, author_role: session.role, text: trimmed })
+      .select().single();
+    if (error) {
+      setPending((p) => p.filter((m) => m.id !== tempId));
+      setText(trimmed);
+      return;
+    }
+    // Swap tempId with real id so realtime dedupe works.
+    if (data) setPending((p) => p.map((m) => (m.id === tempId ? { ...(data as any) } : m)));
   };
+
+  const saveEdit = async (id: string) => {
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    setEditingId(null);
+    await supabase.from("chat_messages").update({ text: trimmed }).eq("id", id);
+  };
+  const remove = async (id: string) => {
+    if (!confirm("Delete this message?")) return;
+    await supabase.from("chat_messages").delete().eq("id", id);
+  };
+
   const participants = [`${upr.airline_code} Dispatcher`, ...segs.map((s) => `${s.fir_code} ${FIRS.find((f) => f.code === s.fir_code)?.name ?? ""}`)];
 
   return (
@@ -854,7 +894,19 @@ function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentR
         <div className="text-[10px] text-slate-500 truncate">Participants: {participants.join(", ")}</div>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {chat.map((m) => <ChatBubble key={m.id} m={m} mineId={session.userId} />)}
+        {merged.map((m) => (
+          <ChatBubble
+            key={m.id} m={m} mineId={session.userId}
+            isPending={m.id.startsWith("tmp-")}
+            isEditing={editingId === m.id}
+            editText={editText}
+            onStartEdit={() => { setEditingId(m.id); setEditText(m.text); }}
+            onCancelEdit={() => setEditingId(null)}
+            onChangeEdit={setEditText}
+            onSaveEdit={() => saveEdit(m.id)}
+            onDelete={() => remove(m.id)}
+          />
+        ))}
         <div ref={endRef} />
       </div>
       <form onSubmit={(e) => { e.preventDefault(); send(); }} className="border-t border-slate-800 p-2 flex gap-2">
@@ -864,7 +916,13 @@ function SegmentChat({ upr, segs, chat, session }: { upr: UPRRow; segs: SegmentR
     </div>
   );
 }
-function ChatBubble({ m, mineId }: { m: ChatRow; mineId: string }) {
+function ChatBubble({
+  m, mineId, isPending, isEditing, editText, onStartEdit, onCancelEdit, onChangeEdit, onSaveEdit, onDelete,
+}: {
+  m: ChatRow; mineId: string; isPending?: boolean; isEditing?: boolean; editText?: string;
+  onStartEdit?: () => void; onCancelEdit?: () => void; onChangeEdit?: (v: string) => void;
+  onSaveEdit?: () => void; onDelete?: () => void;
+}) {
   if (m.author_role === "system") return (
     <div className="text-center text-[10px] uppercase tracking-wider text-slate-500 py-1">
       {m.text} <span className="text-slate-600">· {fmtTime(m.created_at)}</span>
@@ -872,15 +930,42 @@ function ChatBubble({ m, mineId }: { m: ChatRow; mineId: string }) {
   );
   const mine = m.author === mineId;
   return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm ${mine ? "bg-sky-500/90 text-slate-950" : "bg-slate-800 text-slate-100 ring-1 ring-slate-700"}`}>
+    <div className={`group flex ${mine ? "justify-end" : "justify-start"}`}>
+      <div className={`relative max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm ${mine ? "bg-sky-500/90 text-slate-950" : "bg-slate-800 text-slate-100 ring-1 ring-slate-700"} ${isPending ? "opacity-60" : ""}`}>
         <div className={`text-[10px] font-semibold opacity-80 ${mine ? "text-slate-900" : "text-emerald-300"}`}>{m.author_label}</div>
-        <div className="leading-snug">{m.text}</div>
-        <div className={`text-[9px] mt-0.5 opacity-60 ${mine ? "text-slate-900" : "text-slate-400"}`}>{fmtTime(m.created_at)}</div>
+        {isEditing ? (
+          <div className="flex flex-col gap-1 mt-0.5 min-w-[180px]">
+            <textarea
+              value={editText}
+              onChange={(e) => onChangeEdit?.(e.target.value)}
+              className="bg-slate-950/70 text-slate-100 ring-1 ring-slate-700 rounded px-1.5 py-1 text-xs outline-none focus:ring-sky-400"
+              rows={2}
+              autoFocus
+            />
+            <div className="flex gap-1.5 text-[10px]">
+              <button onClick={onSaveEdit} className="px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-semibold">Save</button>
+              <button onClick={onCancelEdit} className="px-2 py-0.5 rounded bg-slate-700 text-slate-200">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="leading-snug whitespace-pre-wrap break-words">{m.text}</div>
+        )}
+        <div className={`text-[9px] mt-0.5 opacity-60 ${mine ? "text-slate-900" : "text-slate-400"}`}>
+          {fmtTime(m.created_at)}
+          {m.edited_at ? <span className="ml-1 italic">· edited</span> : null}
+          {isPending ? <span className="ml-1 italic">· sending…</span> : null}
+        </div>
+        {mine && !isEditing && !isPending && (
+          <div className="absolute -top-2 right-1 hidden group-hover:flex gap-1">
+            <button onClick={onStartEdit} title="Edit" className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-200 ring-1 ring-slate-700 hover:bg-slate-800">✎</button>
+            <button onClick={onDelete} title="Delete" className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-red-300 ring-1 ring-slate-700 hover:bg-slate-800">🗑</button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
 
 function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; session: AppSession }) {
   const [text, setText] = useState("");
