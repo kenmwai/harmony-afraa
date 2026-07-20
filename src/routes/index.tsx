@@ -2,8 +2,8 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  FIRS, REJECT_REASONS, STATUS_META,
-  type AppSession, type BroadcastRow, type ChatRow, type SegmentRow, type SegStatus, type UPRRow,
+  FIRS, REJECT_REASONS, STATUS_META, REACTION_EMOJIS,
+  type AppSession, type BroadcastRow, type ChatRow, type ChatReactionRow, type SegmentRow, type SegStatus, type UPRRow,
   type TrialScheduleRow, type FlightReportRow,
   fmtBytes, fmtTime,
 } from "@/lib/upr-types";
