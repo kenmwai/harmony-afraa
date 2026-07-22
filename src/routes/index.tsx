@@ -898,9 +898,9 @@ function SegmentChat({ upr, segs, chat, reactions, session }: { upr: UPRRow; seg
     setText("");
     const { data, error } = await supabase.from("chat_messages")
       .insert({ upr_id: upr.id, author: session.userId, author_label: myLabel, author_role: session.role, text: trimmed })
-      .select().single();
-    if (error) { setPending((p) => p.filter((m) => m.id !== tempId)); setText(trimmed); return; }
-    if (data) setPending((p) => p.map((m) => (m.id === tempId ? { ...(data as any) } : m)));
+      .select().maybeSingle();
+    if (error || !data) { setPending((p) => p.filter((m) => m.id !== tempId)); setText(trimmed); return; }
+    setPending((p) => p.map((m) => (m.id === tempId ? { ...(data as any) } : m)));
   };
 
   const saveEdit = async (id: string) => {
