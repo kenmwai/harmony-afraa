@@ -1106,17 +1106,25 @@ function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; s
 // ─────────── Admin view: approvals + analytics ───────────
 function AdminView({ session, uprs, segments, schedules, reports }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; schedules: TrialScheduleRow[]; reports: FlightReportRow[] }) {
   type PendingRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
+  type ActiveRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
   const [pending, setPending] = useState<PendingRow[]>([]);
+  const [active, setActive] = useState<ActiveRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase
+    const { data: pend } = await supabase
       .from("profiles")
       .select("id,email,full_name,requested_role,requested_scope,created_at,approved,rejected")
       .eq("approved", false)
       .eq("rejected", false)
       .order("created_at");
-    setPending((data ?? []) as any);
+    setPending((pend ?? []) as any);
+    const { data: act } = await supabase
+      .from("profiles")
+      .select("id,email,full_name,requested_role,requested_scope,created_at,approved")
+      .eq("approved", true)
+      .order("created_at");
+    setActive((act ?? []) as any);
   }, []);
   useEffect(() => { load(); }, [load, session.userId]);
 
@@ -1202,6 +1210,48 @@ function AdminView({ session, uprs, segments, schedules, reports }: { session: A
                         Delete
                       </button>
                     </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="rounded-xl bg-slate-900/70 ring-1 ring-slate-800 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-semibold">Active users ({active.length})</div>
+          <button onClick={load} className="text-[11px] text-sky-400 hover:text-sky-300">Refresh</button>
+        </div>
+        {active.length === 0 ? (
+          <div className="text-xs text-slate-500 py-4 text-center">No active users yet.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-[11px] uppercase tracking-wider text-slate-400">
+              <tr><th className="text-left py-2">Name</th><th className="text-left">Email</th><th className="text-left">Role</th><th className="text-left">Scope</th><th className="text-right">Action</th></tr>
+            </thead>
+            <tbody>
+              {active.map((p) => (
+                <tr key={p.id} className="border-t border-slate-800">
+                  <td className="py-2">{p.full_name}</td>
+                  <td className="text-slate-400">{p.email}</td>
+                  <td><span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800">{p.requested_role ?? "—"}</span></td>
+                  <td className="font-mono text-slate-300">{p.requested_scope ?? "—"}</td>
+                  <td className="text-right">
+                    <button
+                      disabled={busy === p.id || p.email.toLowerCase() === "kkionero@afraa.org"}
+                      onClick={async () => {
+                        if (!confirm(`Permanently delete the account for ${p.email}? This removes their sign-in, profile, and role. This cannot be undone.`)) return;
+                        setBusy(p.id);
+                        try { await deleteUserAccount({ data: { userId: p.id } }); }
+                        catch (e: any) { alert(e?.message ?? "Failed to delete account"); }
+                        await load();
+                        setBusy(null);
+                      }}
+                      className="text-xs px-3 py-1 rounded bg-red-500 hover:bg-red-400 disabled:opacity-40 text-red-50 font-semibold"
+                      title={p.email.toLowerCase() === "kkionero@afraa.org" ? "The primary admin cannot be deleted" : "Delete this user"}
+                    >
+                      {busy === p.id ? "…" : "Delete"}
+                    </button>
                   </td>
                 </tr>
               ))}
