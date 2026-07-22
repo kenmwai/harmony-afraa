@@ -413,8 +413,9 @@ function NewUPRForm({ session, onCreated }: { session: AppSession; onCreated: (i
         callsign, flight_no: flightNo, dep: dep || "----", arr: arr || "----", aircraft: acCode,
         airline_code: session.scope!, created_by: session.userId,
         baseline_minutes: baseline, optimized_minutes: optimized, burn_kg_per_min: burn,
-      }).select().single();
+      }).select().maybeSingle();
       if (error) throw error;
+      if (!u) throw new Error("Request was saved but could not be read back — please refresh.");
 
       if (pendingPdf) {
         const att = await uploadPdf(pendingPdf, "flightplan", u.id);
