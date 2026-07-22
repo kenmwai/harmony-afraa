@@ -413,8 +413,9 @@ function NewUPRForm({ session, onCreated }: { session: AppSession; onCreated: (i
         callsign, flight_no: flightNo, dep: dep || "----", arr: arr || "----", aircraft: acCode,
         airline_code: session.scope!, created_by: session.userId,
         baseline_minutes: baseline, optimized_minutes: optimized, burn_kg_per_min: burn,
-      }).select().single();
+      }).select().maybeSingle();
       if (error) throw error;
+      if (!u) throw new Error("Request was saved but could not be read back — please refresh.");
 
       if (pendingPdf) {
         const att = await uploadPdf(pendingPdf, "flightplan", u.id);
@@ -897,9 +898,9 @@ function SegmentChat({ upr, segs, chat, reactions, session }: { upr: UPRRow; seg
     setText("");
     const { data, error } = await supabase.from("chat_messages")
       .insert({ upr_id: upr.id, author: session.userId, author_label: myLabel, author_role: session.role, text: trimmed })
-      .select().single();
-    if (error) { setPending((p) => p.filter((m) => m.id !== tempId)); setText(trimmed); return; }
-    if (data) setPending((p) => p.map((m) => (m.id === tempId ? { ...(data as any) } : m)));
+      .select().maybeSingle();
+    if (error || !data) { setPending((p) => p.filter((m) => m.id !== tempId)); setText(trimmed); return; }
+    setPending((p) => p.map((m) => (m.id === tempId ? { ...(data as any) } : m)));
   };
 
   const saveEdit = async (id: string) => {
