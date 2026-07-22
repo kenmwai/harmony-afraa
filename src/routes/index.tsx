@@ -1106,17 +1106,25 @@ function BroadcastPanel({ broadcasts, session }: { broadcasts: BroadcastRow[]; s
 // ─────────── Admin view: approvals + analytics ───────────
 function AdminView({ session, uprs, segments, schedules, reports }: { session: AppSession; uprs: UPRRow[]; segments: SegmentRow[]; schedules: TrialScheduleRow[]; reports: FlightReportRow[] }) {
   type PendingRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
+  type ActiveRow = { id: string; email: string; full_name: string; requested_role: string | null; requested_scope: string | null; created_at: string };
   const [pending, setPending] = useState<PendingRow[]>([]);
+  const [active, setActive] = useState<ActiveRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase
+    const { data: pend } = await supabase
       .from("profiles")
       .select("id,email,full_name,requested_role,requested_scope,created_at,approved,rejected")
       .eq("approved", false)
       .eq("rejected", false)
       .order("created_at");
-    setPending((data ?? []) as any);
+    setPending((pend ?? []) as any);
+    const { data: act } = await supabase
+      .from("profiles")
+      .select("id,email,full_name,requested_role,requested_scope,created_at,approved")
+      .eq("approved", true)
+      .order("created_at");
+    setActive((act ?? []) as any);
   }, []);
   useEffect(() => { load(); }, [load, session.userId]);
 
